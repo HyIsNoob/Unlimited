@@ -1,0 +1,7 @@
+{
+  "name": "Gojo Satoru AR Experience",
+  "description": "AR simulation of Cursed Techniques: Blue, Red, and Hollow Purple using Hand Tracking.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

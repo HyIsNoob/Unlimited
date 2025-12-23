@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gojo Satoru AR Experience</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        
+        /* Video hidden, used for processing */
+        #input_video { display: none; }
+        
+        /* UI Overlay */
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            color: #0ff;
+            text-shadow: 0 0 5px #0ff;
+            pointer-events: none;
+        }
+        .stat-box {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border: 1px solid #0ff;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        .warning { color: #f00; text-shadow: 0 0 5px #f00; border-color: #f00; }
+        
+        /* Flash Effect Overlay */
+        #flash-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: white;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 99;
+            transition: opacity 0.1s ease-out;
+        }
+
+        /* Mirror the canvas to match user movement naturally */
+        canvas { transform: scaleX(-1); }
+    </style>
+
+    <!-- 1. Three.js Core -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- 2. Post Processing Dependencies (Order matters for global scripts) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <!-- 3. MediaPipe Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <!-- Video Element for MediaPipe (Hidden) -->
+    <video id="input_video"></video>
+
+    <!-- UI Logs -->
+    <div id="ui-layer">
+        <div class="stat-box" id="log-left">LEFT: Searching...</div>
+        <div class="stat-box" id="log-right">RIGHT: Searching...</div>
+        <div class="stat-box" id="log-system">SYSTEM: Idle</div>
+    </div>
+
+    <!-- Screen Flash -->
+    <div id="flash-overlay"></div>
+
+    <!-- Main Logic -->
+    <script>
+        // --- CONSTANTS ---
+        const PALM_IDX = 0;
+        const THUMB_TIP = 4;
+        const INDEX_TIP = 8;
+        const MIDDLE_TIP = 12;
+        const RING_TIP = 16;
+        const PINKY_TIP = 20;
+
+        const STATE = {
+            IDLE: 'IDLE',
+            SINGLE: 'SINGLE', // Red/Blue separate
+            MERGING: 'MERGING', // Hands close, forming purple
+            HOLDING: 'HOLDING', // Purple formed, waiting for snap
+            EXPLODING: 'EXPLODING', // Boom
+            COOLDOWN: 'COOLDOWN'
+        };
+
+        // Configuration
+        const CONFIG = {
+            particleCount: 6000,
+            mergeDistance: 0.15, // Screen space distance (0-1 range approx)
+            hollowRadius: 0.2, // Radius of the "void" in hand
+            bloomStrength: 2.5,
+            bloomRadius: 0.5,
+            bloomThreshold: 0,
+        };
+
+        // Global Variables
+        let camera, scene, renderer, composer;
+        let particleSystem;
+        let currentState = STATE.IDLE;
+        let appTime = 0;
+        let cooldownTimer = 0;
+        
+        // Hand Data Container
+        const handsData = {
+            left: { present: false, x: 0, y: 0, gesture: 'OPEN', pinchDist: 1 },
+            right: { present: false, x: 0, y: 0, gesture: 'OPEN', pinchDist: 1 },
+            distance: 1, // Distance between palms
+            center: new THREE.Vector3() // Midpoint
+        };
+
+        // --- UTILS: TEXTURE GENERATION ---
+        function createGlowTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32;
+            canvas.height = 32;
+            const context = canvas.getContext('2d');
+            const gradient = context.createRadialGradient(16, 16, 0, 16, 16, 16);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            gradient.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            context.fillStyle = gradient;
+            context.fillRect(0, 0, 32, 32);
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        // --- PARTICLE SYSTEM ENGINE ---
+        class ParticleEngine {
+            constructor(scene) {
+                this.count = CONFIG.particleCount;
+                this.geometry = new THREE.BufferGeometry();
+                
+                // Attributes
+                const positions = new Float32Array(this.count * 3);
+                const colors = new Float32Array(this.count * 3);
+                const sizes = new Float32Array(this.count);
+                
+                // Custom data for physics
+                this.velocities = new Float32Array(this.count * 3);
+                this.angles = new Float32Array(this.count); // For spiraling
+                this.radii = new Float32Array(this.count); // Distance from center
+                this.types = new Float32Array(this.count); // 0: Idle, 1: Red, 2: Blue, 3: Purple
+
+                for (let i = 0; i < this.count; i++) {
+                    positions[i * 3] = (Math.random() - 0.5) * 10;
+                    positions[i * 3 + 1] = (Math.random() - 0.5) * 10;
+                    positions[i * 3 + 2] = (Math.random() - 0.5) * 5;
+                    
+                    colors[i * 3] = 1; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 1;
+                    sizes[i] = 0.5;
+                    this.angles[i] = Math.random() * Math.PI * 2;
+                    this.radii[i] = 1 + Math.random() * 2;
+                    this.types[i] = 0; // Idle
+                }
+
+                this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                this.geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+                const material = new THREE.PointsMaterial({
+                    size: 0.2,
+                    map: createGlowTexture(),
+                    vertexColors: true,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false,
+                    transparent: true,
+                    opacity: 0.8
+                });
+
+                this.mesh = new THREE.Points(this.geometry, material);
+                this.mesh.frustumCulled = false; // Always render
+                scene.add(this.mesh);
+            }
+
+            update(dt) {
+                const positions = this.geometry.attributes.position.array;
+                const colors = this.geometry.attributes.color.array;
+                const sizes = this.geometry.attributes.size.array;
+                
+                // Color Definitions
+                const colRed = { r: 1, g: 0.1, b: 0.1 };
+                const colBlue = { r: 0.1, g: 0.3, b: 1 };
+                const colPurple = { r: 0.8, g: 0.2, b: 1 };
+                const colWhite = { r: 1, g: 1, b: 1 };
+
+                // Pre-calc targets mapped to 3D space
+                // MediaPipe gives x (0-1), y (0-1). ThreeJS view is approx width 6, height 4 at z=0
+                // We mirror X
+                const mapTo3D = (x, y) => {
+                    return {
+                        x: (x - 0.5) * 8, // Scale to screen width
+                        y: -(y - 0.5) * 6, // Scale to screen height, invert Y
+                        z: 0
+                    };
+                };
+
+                const leftPos = mapTo3D(handsData.left.x, handsData.left.y);
+                const rightPos = mapTo3D(handsData.right.x, handsData.right.y);
+                const centerPos = mapTo3D(
+                    (handsData.left.x + handsData.right.x) / 2, 
+                    (handsData.left.y + handsData.right.y) / 2
+                );
+
+                for (let i = 0; i < this.count; i++) {
+                    const idx = i * 3;
+                    let pX = positions[idx];
+                    let pY = positions[idx+1];
+                    let pZ = positions[idx+2];
+                    
+                    // Logic Switch based on State
+                    if (currentState === STATE.EXPLODING) {
+                        // Expansion logic
+                        pX += this.velocities[idx] * dt * 15;
+                        pY += this.velocities[idx+1] * dt * 15;
+                        pZ += this.velocities[idx+2] * dt * 15;
+                        
+                        // Fade out
+                        sizes[i] *= 0.95;
+
+                    } else if (currentState === STATE.HOLDING || currentState === STATE.MERGING) {
+                        // Purple Ball Logic
+                        // Swarm around center
+                        const target = centerPos;
+                        this.angles[i] += dt * 5; // Spin fast
+                        
+                        // Chaotic vibration
+                        const r = (currentState === STATE.MERGING) ? 1.5 : 0.8; // Shrink when holding
+                        const noise = Math.sin(i + appTime * 10) * 0.1;
+                        
+                        const tx = target.x + Math.cos(this.angles[i] + i) * (r + noise);
+                        const ty = target.y + Math.sin(this.angles[i] + i) * (r + noise);
+                        const tz = target.z + Math.sin(this.angles[i] * 2) * r;
+
+                        // Lerp towards target
+                        pX += (tx - pX) * 0.1;
+                        pY += (ty - pY) * 0.1;
+                        pZ += (tz - pZ) * 0.1;
+
+                        // Color
+                        colors[idx] = colPurple.r;
+                        colors[idx+1] = colPurple.g;
+                        colors[idx+2] = colPurple.b;
+                        sizes[i] = 0.4 + Math.random() * 0.2;
+
+                        // Store velocity for explosion
+                        this.velocities[idx] = (Math.random() - 0.5);
+                        this.velocities[idx+1] = (Math.random() - 0.5);
+                        this.velocities[idx+2] = (Math.random() - 0.5);
+
+                    } else if (currentState === STATE.SINGLE) {
+                        // Split logic: Half particles to left, Half to right
+                        const isLeft = i % 2 === 0;
+                        const hand = isLeft ? handsData.left : handsData.right;
+                        const target = isLeft ? leftPos : rightPos;
+                        const col = isLeft ? colRed : colBlue;
+                        
+                        if (hand.present) {
+                            if (hand.gesture === 'FIST') {
+                                // --- BLACK HOLE MODE ---
+                                // Spiral inwards but keep hollow center
+                                this.angles[i] += dt * (isLeft ? -4 : 4); // Red spins opposite to Blue
+                                this.radii[i] -= dt * 2; // Suck in
+                                
+                                // Reset if too close or too far
+                                if (this.radii[i] < CONFIG.hollowRadius) this.radii[i] = 1.5;
+                                if (this.radii[i] > 2.0) this.radii[i] = 1.5;
+
+                                const r = this.radii[i];
+                                const tx = target.x + Math.cos(this.angles[i]) * r;
+                                const ty = target.y + Math.sin(this.angles[i]) * r;
+                                
+                                pX += (tx - pX) * 0.2;
+                                pY += (ty - pY) * 0.2;
+                                pZ += (target.z - pZ) * 0.2;
+                                
+                                sizes[i] = 0.3;
+
+                            } else {
+                                // --- OPEN HAND MODE ---
+                                // Floating idle
+                                const floatSpeed = dt * 0.5;
+                                pX += (Math.sin(appTime + i) * 0.02);
+                                pY += (Math.cos(appTime + i * 0.5) * 0.02) + floatSpeed;
+                                
+                                // Gentle attraction to hand
+                                pX += (target.x - pX) * 0.02;
+                                pY += (target.y - pY) * 0.02;
+                                pZ += (target.z - pZ) * 0.02;
+                                
+                                sizes[i] = 0.2;
+                            }
+                            
+                            // Apply Color
+                            colors[idx] = col.r; colors[idx+1] = col.g; colors[idx+2] = col.b;
+
+                        } else {
+                            // Hand lost? Drift away or fade
+                            colors[idx] *= 0.9;
+                            colors[idx+1] *= 0.9;
+                            colors[idx+2] *= 0.9;
+                        }
+
+                    } else {
+                        // IDLE or COOLDOWN
+                        // Random drift
+                        pY += dt * 0.5;
+                        if (pY > 5) pY = -5;
+                        colors[idx] *= 0.95; 
+                        colors[idx+1] *= 0.95;
+                        colors[idx+2] *= 0.95;
+                    }
+
+                    // Write back
+                    positions[idx] = pX;
+                    positions[idx+1] = pY;
+                    positions[idx+2] = pZ;
+                }
+
+                this.geometry.attributes.position.needsUpdate = true;
+                this.geometry.attributes.color.needsUpdate = true;
+                this.geometry.attributes.size.needsUpdate = true;
+            }
+        }
+
+        // --- GAME LOGIC ---
+        function updateLogic() {
+            const uiSys = document.getElementById('log-system');
+
+            if (currentState === STATE.COOLDOWN) {
+                cooldownTimer -= 0.016; // Approx dt
+                if (cooldownTimer <= 0) {
+                    currentState = STATE.IDLE;
+                    uiSys.innerText = "SYSTEM: Ready";
+                    uiSys.classList.remove('warning');
+                }
+                return;
+            }
+
+            if (currentState === STATE.EXPLODING) {
+                cooldownTimer -= 0.016;
+                if (cooldownTimer <= 0) {
+                    currentState = STATE.COOLDOWN;
+                    cooldownTimer = 2.0;
+                    uiSys.innerText = "SYSTEM: Cooldown";
+                }
+                return;
+            }
+
+            // Check for Hands
+            if (!handsData.left.present && !handsData.right.present) {
+                currentState = STATE.IDLE;
+                uiSys.innerText = "SYSTEM: Searching Hands...";
+                return;
+            }
+
+            // Calculate Distance
+            const dx = handsData.left.x - handsData.right.x;
+            const dy = handsData.left.y - handsData.right.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            handsData.distance = dist;
+
+            // State Machine Transitions
+            if (handsData.left.present && handsData.right.present) {
+                
+                // Trigger Purple
+                if (dist < CONFIG.mergeDistance && currentState !== STATE.HOLDING) {
+                    currentState = STATE.MERGING;
+                    uiSys.innerText = "SYSTEM: HOLLOW PURPLE - FORMING";
+                    uiSys.className = "stat-box warning";
+                    
+                    // Transition to holding after delay
+                    setTimeout(() => {
+                        if(currentState === STATE.MERGING) {
+                            currentState = STATE.HOLDING;
+                            uiSys.innerText = "SYSTEM: HOLLOW PURPLE - READY (SNAP TO FIRE)";
+                        }
+                    }, 1000);
+                } 
+                else if (currentState === STATE.HOLDING) {
+                    // Check for SNAP (Explosion)
+                    // Logic: Sudden separation of Pinch (Thumb/Middle)
+                    // Or simply: Both hands gesture Open quickly.
+                    // Let's use Pinch Release on Right Hand (Gojo usually snaps right hand)
+                    const isPinching = handsData.right.pinchDist < 0.05;
+                    
+                    // Simple trigger: If hands move apart fast OR gesture becomes OPEN from FIST/PINCH
+                    if (handsData.right.gesture === 'OPEN') {
+                        triggerExplosion();
+                    }
+                }
+                else if (dist >= CONFIG.mergeDistance && currentState !== STATE.MERGING) {
+                    currentState = STATE.SINGLE;
+                    uiSys.innerText = "SYSTEM: Techniques Active (Red/Blue)";
+                    uiSys.classList.remove('warning');
+                }
+            } else {
+                currentState = STATE.SINGLE; // Only one hand present
+                uiSys.innerText = "SYSTEM: Single Technique";
+            }
+        }
+
+        function triggerExplosion() {
+            currentState = STATE.EXPLODING;
+            cooldownTimer = 1.0; // Explosion duration
+            
+            // Flash Effect
+            const flash = document.getElementById('flash-overlay');
+            flash.style.opacity = 1;
+            setTimeout(() => { flash.style.opacity = 0; }, 100);
+            
+            document.getElementById('log-system').innerText = "SYSTEM: KYOSHIKI MURASAKI (PURPLE)!";
+        }
+
+        // --- MEDIAPIPE HANDLER ---
+        function onResults(results) {
+            // Reset presence
+            handsData.left.present = false;
+            handsData.right.present = false;
+
+            if (results.multiHandLandmarks) {
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    const landmarks = results.multiHandLandmarks[i];
+                    const label = results.multiHandedness[i].label; // "Left" or "Right"
+                    
+                    // IMPORTANT: MediaPipe mirrors labels if selfie mode is false, but we want Mirroring.
+                    // Usually "Left" label means the user's left hand.
+                    // We need to map coordinate X.
+                    
+                    const palm = landmarks[PALM_IDX];
+                    
+                    // Simple Gesture Detection
+                    // Distance between wrist and finger tips
+                    const thumbTip = landmarks[THUMB_TIP];
+                    const indexTip = landmarks[INDEX_TIP];
+                    const middleTip = landmarks[MIDDLE_TIP];
+                    const ringTip = landmarks[RING_TIP];
+                    const pinkyTip = landmarks[PINKY_TIP];
+
+                    const isFist = (
+                        landmarks[8].y > landmarks[6].y && // Index curled
+                        landmarks[12].y > landmarks[10].y && // Middle curled
+                        landmarks[16].y > landmarks[14].y // Ring curled
+                    );
+
+                    // Pinch Distance (Thumb to Middle - Gojo's Snap)
+                    const pinchDx = thumbTip.x - middleTip.x;
+                    const pinchDy = thumbTip.y - middleTip.y;
+                    const pinchDist = Math.sqrt(pinchDx*pinchDx + pinchDy*pinchDy);
+
+                    const data = (label === 'Left') ? handsData.left : handsData.right;
+                    
+                    data.present = true;
+                    // Mirror X coordinate for ThreeJS: 1.0 - x
+                    data.x = 1.0 - palm.x; 
+                    data.y = palm.y;
+                    data.gesture = isFist ? 'FIST' : 'OPEN';
+                    data.pinchDist = pinchDist;
+
+                    // Update UI Log
+                    const logId = (label === 'Left') ? 'log-left' : 'log-right';
+                    const color = (label === 'Left') ? 'Red' : 'Blue';
+                    document.getElementById(logId).innerText = 
+                        `${label.toUpperCase()} (${color}): ${data.gesture} | Pinch: ${pinchDist.toFixed(2)}`;
+                }
+            }
+        }
+
+        // --- INITIALIZATION ---
+        function init() {
+            // 1. Scene Setup
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true }); // Alpha true for transparency if needed
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            // 2. Post Processing (Bloom)
+            const renderScene = new THREE.RenderPass(scene, camera);
+            
+            const bloomPass = new THREE.UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                CONFIG.bloomStrength,
+                CONFIG.bloomRadius,
+                CONFIG.bloomThreshold
+            );
+
+            composer = new THREE.EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            // 3. Particles
+            particleSystem = new ParticleEngine(scene);
+
+            // 4. MediaPipe Setup
+            const videoElement = document.getElementById('input_video');
+            const hands = new window.Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            
+            hands.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            hands.onResults(onResults);
+
+            const cam = new window.Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 640,
+                height: 480
+            });
+            cam.start();
+
+            // 5. Events
+            window.addEventListener('resize', onWindowResize, false);
+            
+            // Start Loop
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            appTime += 0.02;
+
+            updateLogic();
+            particleSystem.update(0.016); // fixed delta roughly
+
+            // Render via Composer (Bloom)
+            composer.render();
+        }
+
+        // Boot
+        init();
+
+    </script>
+</body>
+</html>
