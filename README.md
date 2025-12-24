@@ -1,20 +1,53 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# UNLIMITED
 
-# Run and deploy your AI Studio app
+An Augmented Reality web experiment simulating Gojo Satoru's techniques. This project uses Computer Vision and WebGL to create interactive energy fields controlled by your hands.
 
-This contains everything you need to run your app locally.
+![Project Interface](image_471dea.png)
 
-View your app in AI Studio: https://ai.studio/apps/drive/1se5nyia2tq4nC-Owhs7Efme9YCMtqDuz
+## Overview
 
-## Run Locally
+This application is a single-file WebAR tool. It runs directly in your web browser without installation. It uses MediaPipe Hands to track your movements and Three.js to render thousands of physics-based particles.
 
-**Prerequisites:**  Node.js
+You can control the Limitless techniques (Red, Blue, and Purple) using specific hand gestures.
 
+## Features
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+* Real-time tracking for left and right hands.
+* Interactive particle system with attraction and repulsion physics.
+* Post-processing effects using UnrealBloomPass for neon glow.
+* Gesture recognition for Fists, Open Hands, and Snaps.
+* Adaptive UI that responds to your actions.
+
+## Controls
+
+The system detects three main phases based on hand distance and gestures.
+
+| Technique | Hand | Gesture | Effect |
+| :--- | :--- | :--- | :--- |
+| **Red (Reversal)** | Right | Fist | Particles pull inward to the palm center. |
+| **Blue (Lapse)** | Left | Fist | Particles push outward from the palm center. |
+| **Purple (Hollow)** | Both | Hands Close | Merges Red and Blue into a purple energy sphere. |
+| **Attack** | Both | Snap | Explodes the purple sphere with a shockwave. |
+
+## Tech Stack
+
+* **HTML5 & JavaScript** for core logic.
+* **Three.js** for 3D rendering and particle systems.
+* **MediaPipe Hands** for computer vision and hand tracking.
+* **WebGL Shaders** for visual effects.
+
+## How to Run
+
+1.  Clone this repository.
+    ```bash
+    git clone [https://github.com/HyIsNoob/Domain-Expansion-AR.git](https://github.com/HyIsNoob/Domain-Expansion-AR.git)
+    ```
+2.  Open the project folder.
+3.  Run the `index.html` file using a local server. You can use the "Live Server" extension in VS Code.
+4.  Allow camera access when prompted by the browser.
+
+## Author
+
+**HyIsNoob**
+* Student at University of Information Technology (UIT).
+* Windows User: khang (HYISNOOB).
