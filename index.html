@@ -41,8 +41,8 @@
             transition: opacity 0.1s ease-out;
         }
 
-        /* Mirror the canvas to match user movement naturally */
-        canvas { transform: scaleX(-1); }
+        /* Canvas orientation normal (Mirror effect handled by logic) */
+        canvas { display: block; }
     </style>
 
     <!-- 1. Three.js Core -->
@@ -96,9 +96,11 @@
 
         // Configuration
         const CONFIG = {
-            particleCount: 6000,
-            mergeDistance: 0.15, // Screen space distance (0-1 range approx)
-            hollowRadius: 0.2, // Radius of the "void" in hand
+            particleCount: 6000, 
+            mergeDistance: 0.20, // Increased for easier activation (was 0.08)
+            breakDistance: 0.40, // Hysteresis: Hands can move apart this much before breaking
+            hollowRadius: 0.2, 
+            snapThreshold: 0.08, // Threshold for pinch detection
             bloomStrength: 2.5,
             bloomRadius: 0.5,
             bloomThreshold: 0,
@@ -108,6 +110,7 @@
         let camera, scene, renderer, composer;
         let particleSystem;
         let currentState = STATE.IDLE;
+        let snapPrimed = false; // Tracks if user has pinched and is ready to release (snap)
         let appTime = 0;
         let cooldownTimer = 0;
         
@@ -151,7 +154,6 @@
                 this.velocities = new Float32Array(this.count * 3);
                 this.angles = new Float32Array(this.count); // For spiraling
                 this.radii = new Float32Array(this.count); // Distance from center
-                this.types = new Float32Array(this.count); // 0: Idle, 1: Red, 2: Blue, 3: Purple
 
                 for (let i = 0; i < this.count; i++) {
                     positions[i * 3] = (Math.random() - 0.5) * 10;
@@ -161,8 +163,8 @@
                     colors[i * 3] = 1; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 1;
                     sizes[i] = 0.5;
                     this.angles[i] = Math.random() * Math.PI * 2;
-                    this.radii[i] = 1 + Math.random() * 2;
-                    this.types[i] = 0; // Idle
+                    // Init radii spread out
+                    this.radii[i] = 0.5 + Math.random() * 3.0; 
                 }
 
                 this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -193,11 +195,8 @@
                 const colRed = { r: 1, g: 0.1, b: 0.1 };
                 const colBlue = { r: 0.1, g: 0.3, b: 1 };
                 const colPurple = { r: 0.8, g: 0.2, b: 1 };
-                const colWhite = { r: 1, g: 1, b: 1 };
 
                 // Pre-calc targets mapped to 3D space
-                // MediaPipe gives x (0-1), y (0-1). ThreeJS view is approx width 6, height 4 at z=0
-                // We mirror X
                 const mapTo3D = (x, y) => {
                     return {
                         x: (x - 0.5) * 8, // Scale to screen width
@@ -221,46 +220,38 @@
                     
                     // Logic Switch based on State
                     if (currentState === STATE.EXPLODING) {
-                        // Expansion logic
-                        pX += this.velocities[idx] * dt * 15;
-                        pY += this.velocities[idx+1] * dt * 15;
-                        pZ += this.velocities[idx+2] * dt * 15;
-                        
-                        // Fade out
-                        sizes[i] *= 0.95;
+                        // Explosion: Burst outward violently
+                        pX += this.velocities[idx] * dt * 20;
+                        pY += this.velocities[idx+1] * dt * 20;
+                        pZ += this.velocities[idx+2] * dt * 20;
+                        sizes[i] *= 0.95; // Fade out
 
                     } else if (currentState === STATE.HOLDING || currentState === STATE.MERGING) {
                         // Purple Ball Logic
-                        // Swarm around center
                         const target = centerPos;
-                        this.angles[i] += dt * 5; // Spin fast
+                        this.angles[i] += dt * 8; // Super fast spin
                         
-                        // Chaotic vibration
-                        const r = (currentState === STATE.MERGING) ? 1.5 : 0.8; // Shrink when holding
-                        const noise = Math.sin(i + appTime * 10) * 0.1;
+                        const r = (currentState === STATE.MERGING) ? 1.5 : 0.6; 
+                        const noise = Math.sin(i + appTime * 15) * 0.2;
                         
                         const tx = target.x + Math.cos(this.angles[i] + i) * (r + noise);
                         const ty = target.y + Math.sin(this.angles[i] + i) * (r + noise);
-                        const tz = target.z + Math.sin(this.angles[i] * 2) * r;
+                        const tz = target.z + Math.sin(this.angles[i] * 3) * r; 
 
-                        // Lerp towards target
-                        pX += (tx - pX) * 0.1;
-                        pY += (ty - pY) * 0.1;
-                        pZ += (tz - pZ) * 0.1;
+                        pX += (tx - pX) * 0.15;
+                        pY += (ty - pY) * 0.15;
+                        pZ += (tz - pZ) * 0.15;
 
-                        // Color
-                        colors[idx] = colPurple.r;
-                        colors[idx+1] = colPurple.g;
-                        colors[idx+2] = colPurple.b;
-                        sizes[i] = 0.4 + Math.random() * 0.2;
+                        colors[idx] = colPurple.r; colors[idx+1] = colPurple.g; colors[idx+2] = colPurple.b;
+                        sizes[i] = 0.4 + Math.random() * 0.3;
 
-                        // Store velocity for explosion
+                        // Prep velocities for potential explosion
                         this.velocities[idx] = (Math.random() - 0.5);
                         this.velocities[idx+1] = (Math.random() - 0.5);
                         this.velocities[idx+2] = (Math.random() - 0.5);
 
                     } else if (currentState === STATE.SINGLE) {
-                        // Split logic: Half particles to left, Half to right
+                        // Red / Blue Logic
                         const isLeft = i % 2 === 0;
                         const hand = isLeft ? handsData.left : handsData.right;
                         const target = isLeft ? leftPos : rightPos;
@@ -268,61 +259,96 @@
                         
                         if (hand.present) {
                             if (hand.gesture === 'FIST') {
-                                // --- BLACK HOLE MODE ---
-                                // Spiral inwards but keep hollow center
-                                this.angles[i] += dt * (isLeft ? -4 : 4); // Red spins opposite to Blue
-                                this.radii[i] -= dt * 2; // Suck in
+                                // --- FIST: UPGRADED VORTEX ACCRETION ---
+                                // Simulates a black hole accretion disk with accelerating physics
                                 
-                                // Reset if too close or too far
-                                if (this.radii[i] < CONFIG.hollowRadius) this.radii[i] = 1.5;
-                                if (this.radii[i] > 2.0) this.radii[i] = 1.5;
-
                                 const r = this.radii[i];
-                                const tx = target.x + Math.cos(this.angles[i]) * r;
-                                const ty = target.y + Math.sin(this.angles[i]) * r;
+
+                                // 1. Physics: Conservation of angular momentum & Gravity
+                                // Closer = Faster spin and Stronger Pull
+                                const proximity = 1.0 / (r + 0.1); 
                                 
-                                pX += (tx - pX) * 0.2;
-                                pY += (ty - pY) * 0.2;
-                                pZ += (target.z - pZ) * 0.2;
+                                // Base Speed + Acceleration curve
+                                const spinSpeed = (isLeft ? -3.0 : 3.0) * (1.0 + proximity * 1.5);
+                                const pullSpeed = 1.5 + (proximity * 4.0); // Rapidly increasing suction
+
+                                this.angles[i] += dt * spinSpeed;
+                                this.radii[i] -= dt * pullSpeed;
+
+                                // 2. Reset to FAR OUTSIDE (Environment spawn)
+                                if (this.radii[i] < CONFIG.hollowRadius) {
+                                    this.radii[i] = 4.0 + Math.random() * 3.5; // Spawn radius 4.0 - 7.5
+                                    this.angles[i] = Math.random() * Math.PI * 2; 
+                                }
+
+                                const currR = this.radii[i];
                                 
-                                sizes[i] = 0.3;
+                                const tx = target.x + Math.cos(this.angles[i]) * currR;
+                                const ty = target.y + Math.sin(this.angles[i]) * currR;
+                                
+                                // Tighter follow for snappy, powerful lines
+                                pX += (tx - pX) * 0.6; 
+                                pY += (ty - pY) * 0.6;
+                                pZ += (target.z - pZ) * 0.6;
+                                
+                                // Size: Large concentration near center, smaller trails outside
+                                sizes[i] = 0.15 + (1.0 / (currR + 0.5)) * 0.25;
 
                             } else {
-                                // --- OPEN HAND MODE ---
-                                // Floating idle
-                                const floatSpeed = dt * 0.5;
-                                pX += (Math.sin(appTime + i) * 0.02);
-                                pY += (Math.cos(appTime + i * 0.5) * 0.02) + floatSpeed;
+                                // --- OPEN HAND: ORBITAL SHELL (Lazing/Time-Stop) ---
+                                // Particles float in a stable, contained spherical shell around the hand
                                 
-                                // Gentle attraction to hand
-                                pX += (target.x - pX) * 0.02;
-                                pY += (target.y - pY) * 0.02;
-                                pZ += (target.z - pZ) * 0.02;
+                                // 1. Rotation: Slower, consistent orbit
+                                const rotationSpeed = isLeft ? -1.5 : 1.5; 
+                                this.angles[i] += dt * rotationSpeed;
+
+                                // 2. Radius Physics: Drift towards a target shell radius instead of sucking in
+                                // Target radius varies per particle to create depth (1.0 to 2.2 range)
+                                // Hashing index to get a consistent random radius for this particle
+                                const stableRandom = (i % 100) / 100.0;
+                                const targetRadius = 1.2 + stableRandom * 1.5;
+
+                                // Smoothly interpolate logical radius towards target
+                                const diff = targetRadius - this.radii[i];
+                                this.radii[i] += diff * dt * 2.0; 
+
+                                const r = this.radii[i];
                                 
-                                sizes[i] = 0.2;
+                                // 3. Vertical/Depth Oscillation (Levitation feel)
+                                const verticalSway = Math.sin(appTime * 1.5 + i * 0.1) * 0.3;
+                                
+                                // 4. Calculate Target Position on Shell
+                                // Create intersecting orbital rings to form a sphere
+                                const zPhase = (i % 20) * 0.3; // Distribute phases
+                                
+                                const tx = target.x + Math.cos(this.angles[i]) * r;
+                                const ty = target.y + Math.sin(this.angles[i]) * r + verticalSway;
+                                // Tilt the orbit in Z based on the angle and phase to make it spherical
+                                const tz = target.z + Math.sin(this.angles[i] + zPhase) * (r * 0.6); 
+                                
+                                // 5. Soft approach for fluid movement
+                                pX += (tx - pX) * 0.1; // Gentle follow factor (0.1) vs Fist (0.6)
+                                pY += (ty - pY) * 0.1;
+                                pZ += (tz - pZ) * 0.1;
+                                
+                                // Pulsing glow size
+                                sizes[i] = 0.2 + Math.sin(appTime * 2.0 + i) * 0.1;
                             }
                             
-                            // Apply Color
                             colors[idx] = col.r; colors[idx+1] = col.g; colors[idx+2] = col.b;
 
                         } else {
-                            // Hand lost? Drift away or fade
-                            colors[idx] *= 0.9;
-                            colors[idx+1] *= 0.9;
-                            colors[idx+2] *= 0.9;
+                            // Hand lost: Scatter
+                            colors[idx] *= 0.9; colors[idx+1] *= 0.9; colors[idx+2] *= 0.9;
                         }
 
                     } else {
-                        // IDLE or COOLDOWN
-                        // Random drift
+                        // IDLE
                         pY += dt * 0.5;
                         if (pY > 5) pY = -5;
-                        colors[idx] *= 0.95; 
-                        colors[idx+1] *= 0.95;
-                        colors[idx+2] *= 0.95;
+                        colors[idx] *= 0.95; colors[idx+1] *= 0.95; colors[idx+2] *= 0.95;
                     }
 
-                    // Write back
                     positions[idx] = pX;
                     positions[idx+1] = pY;
                     positions[idx+2] = pZ;
@@ -339,11 +365,12 @@
             const uiSys = document.getElementById('log-system');
 
             if (currentState === STATE.COOLDOWN) {
-                cooldownTimer -= 0.016; // Approx dt
+                cooldownTimer -= 0.016; 
                 if (cooldownTimer <= 0) {
                     currentState = STATE.IDLE;
                     uiSys.innerText = "SYSTEM: Ready";
                     uiSys.classList.remove('warning');
+                    uiSys.style.color = "#0ff";
                 }
                 return;
             }
@@ -371,51 +398,84 @@
             const dist = Math.sqrt(dx*dx + dy*dy);
             handsData.distance = dist;
 
-            // State Machine Transitions
+            // Hand Interaction Logic
             if (handsData.left.present && handsData.right.present) {
                 
-                // Trigger Purple
-                if (dist < CONFIG.mergeDistance && currentState !== STATE.HOLDING) {
+                // 1. Maintain Holding State
+                if (currentState === STATE.HOLDING) {
+                     // Break condition: Hands moved too far apart
+                     if (dist > CONFIG.breakDistance) {
+                         currentState = STATE.SINGLE;
+                         snapPrimed = false;
+                         uiSys.innerText = "SYSTEM: Connection Lost";
+                         uiSys.classList.remove('warning');
+                         uiSys.style.color = "#0ff";
+                         return;
+                     }
+
+                    // Snap Logic: Wait for Pinch then Release
+                    const pinch = handsData.right.pinchDist;
+                    
+                    if (pinch < CONFIG.snapThreshold) {
+                        snapPrimed = true;
+                        uiSys.innerText = "SYSTEM: HOLLOW PURPLE - PRIMED...";
+                        uiSys.style.color = "#d0f"; // Visual cue: Purple Text
+                    } else if (snapPrimed && pinch > (CONFIG.snapThreshold + 0.05)) {
+                        // Released!
+                        triggerExplosion();
+                        snapPrimed = false;
+                        uiSys.style.color = "#0ff";
+                    } else if (!snapPrimed) {
+                         uiSys.innerText = "SYSTEM: HOLLOW PURPLE - READY (SNAP TO FIRE)";
+                         uiSys.style.color = "#0ff";
+                    }
+                }
+                // 2. Maintaining Merging State (waiting for timer)
+                else if (currentState === STATE.MERGING) {
+                    // Check if hands broke apart too early
+                    if (dist > CONFIG.breakDistance) {
+                        currentState = STATE.SINGLE;
+                        uiSys.innerText = "SYSTEM: Forming Failed";
+                        uiSys.classList.remove('warning');
+                    }
+                }
+                // 3. Trigger Merge (From Single or Idle)
+                else if (dist < CONFIG.mergeDistance) {
                     currentState = STATE.MERGING;
                     uiSys.innerText = "SYSTEM: HOLLOW PURPLE - FORMING";
                     uiSys.className = "stat-box warning";
+                    uiSys.style.color = "#0ff";
                     
-                    // Transition to holding after delay
                     setTimeout(() => {
+                        // Only transition if we haven't broken the state
                         if(currentState === STATE.MERGING) {
                             currentState = STATE.HOLDING;
                             uiSys.innerText = "SYSTEM: HOLLOW PURPLE - READY (SNAP TO FIRE)";
+                            snapPrimed = false; 
                         }
                     }, 1000);
-                } 
-                else if (currentState === STATE.HOLDING) {
-                    // Check for SNAP (Explosion)
-                    // Logic: Sudden separation of Pinch (Thumb/Middle)
-                    // Or simply: Both hands gesture Open quickly.
-                    // Let's use Pinch Release on Right Hand (Gojo usually snaps right hand)
-                    const isPinching = handsData.right.pinchDist < 0.05;
-                    
-                    // Simple trigger: If hands move apart fast OR gesture becomes OPEN from FIST/PINCH
-                    if (handsData.right.gesture === 'OPEN') {
-                        triggerExplosion();
-                    }
                 }
-                else if (dist >= CONFIG.mergeDistance && currentState !== STATE.MERGING) {
+                // 4. Default Single State
+                else {
                     currentState = STATE.SINGLE;
                     uiSys.innerText = "SYSTEM: Techniques Active (Red/Blue)";
                     uiSys.classList.remove('warning');
+                    uiSys.style.color = "#0ff";
                 }
+
             } else {
-                currentState = STATE.SINGLE; // Only one hand present
+                // If one hand lost, revert to single
+                currentState = STATE.SINGLE; 
                 uiSys.innerText = "SYSTEM: Single Technique";
+                uiSys.classList.remove('warning');
+                uiSys.style.color = "#0ff";
             }
         }
 
         function triggerExplosion() {
             currentState = STATE.EXPLODING;
-            cooldownTimer = 1.0; // Explosion duration
+            cooldownTimer = 1.0; 
             
-            // Flash Effect
             const flash = document.getElementById('flash-overlay');
             flash.style.opacity = 1;
             setTimeout(() => { flash.style.opacity = 0; }, 100);
@@ -425,36 +485,24 @@
 
         // --- MEDIAPIPE HANDLER ---
         function onResults(results) {
-            // Reset presence
             handsData.left.present = false;
             handsData.right.present = false;
 
             if (results.multiHandLandmarks) {
                 for (let i = 0; i < results.multiHandLandmarks.length; i++) {
                     const landmarks = results.multiHandLandmarks[i];
-                    const label = results.multiHandedness[i].label; // "Left" or "Right"
-                    
-                    // IMPORTANT: MediaPipe mirrors labels if selfie mode is false, but we want Mirroring.
-                    // Usually "Left" label means the user's left hand.
-                    // We need to map coordinate X.
+                    const label = results.multiHandedness[i].label; 
                     
                     const palm = landmarks[PALM_IDX];
-                    
-                    // Simple Gesture Detection
-                    // Distance between wrist and finger tips
                     const thumbTip = landmarks[THUMB_TIP];
-                    const indexTip = landmarks[INDEX_TIP];
                     const middleTip = landmarks[MIDDLE_TIP];
-                    const ringTip = landmarks[RING_TIP];
-                    const pinkyTip = landmarks[PINKY_TIP];
 
                     const isFist = (
-                        landmarks[8].y > landmarks[6].y && // Index curled
-                        landmarks[12].y > landmarks[10].y && // Middle curled
-                        landmarks[16].y > landmarks[14].y // Ring curled
+                        landmarks[8].y > landmarks[6].y && 
+                        landmarks[12].y > landmarks[10].y && 
+                        landmarks[16].y > landmarks[14].y 
                     );
 
-                    // Pinch Distance (Thumb to Middle - Gojo's Snap)
                     const pinchDx = thumbTip.x - middleTip.x;
                     const pinchDy = thumbTip.y - middleTip.y;
                     const pinchDist = Math.sqrt(pinchDx*pinchDx + pinchDy*pinchDy);
@@ -462,13 +510,11 @@
                     const data = (label === 'Left') ? handsData.left : handsData.right;
                     
                     data.present = true;
-                    // Mirror X coordinate for ThreeJS: 1.0 - x
                     data.x = 1.0 - palm.x; 
                     data.y = palm.y;
                     data.gesture = isFist ? 'FIST' : 'OPEN';
                     data.pinchDist = pinchDist;
 
-                    // Update UI Log
                     const logId = (label === 'Left') ? 'log-left' : 'log-right';
                     const color = (label === 'Left') ? 'Red' : 'Blue';
                     document.getElementById(logId).innerText = 
@@ -479,19 +525,17 @@
 
         // --- INITIALIZATION ---
         function init() {
-            // 1. Scene Setup
             const container = document.getElementById('canvas-container');
             scene = new THREE.Scene();
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.z = 5;
 
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true }); // Alpha true for transparency if needed
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true }); 
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            // 2. Post Processing (Bloom)
             const renderScene = new THREE.RenderPass(scene, camera);
             
             const bloomPass = new THREE.UnrealBloomPass(
@@ -505,10 +549,8 @@
             composer.addPass(renderScene);
             composer.addPass(bloomPass);
 
-            // 3. Particles
             particleSystem = new ParticleEngine(scene);
 
-            // 4. MediaPipe Setup
             const videoElement = document.getElementById('input_video');
             const hands = new window.Hands({locateFile: (file) => {
                 return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
@@ -531,10 +573,8 @@
             });
             cam.start();
 
-            // 5. Events
             window.addEventListener('resize', onWindowResize, false);
             
-            // Start Loop
             animate();
         }
 
@@ -550,13 +590,10 @@
             appTime += 0.02;
 
             updateLogic();
-            particleSystem.update(0.016); // fixed delta roughly
-
-            // Render via Composer (Bloom)
+            particleSystem.update(0.016); 
             composer.render();
         }
 
-        // Boot
         init();
 
     </script>
