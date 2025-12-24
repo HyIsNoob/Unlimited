@@ -2,8 +2,6 @@
 
 An Augmented Reality web experiment simulating Gojo Satoru's techniques. This project uses Computer Vision and WebGL to create interactive energy fields controlled by your hands.
 
-![Project Interface](image_471dea.png)
-
 ## Overview
 
 This application is a single-file WebAR tool. It runs directly in your web browser without installation. It uses MediaPipe Hands to track your movements and Three.js to render thousands of physics-based particles.
