@@ -6,11 +6,91 @@
     <title>Gojo Satoru AR Experience</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
-        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
         
-        /* Video hidden, used for processing */
-        #input_video { display: none; }
+        /* Video Background (Toggleable) */
+        #input_video { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            z-index: 0; 
+            transform: scaleX(-1); /* Mirror effect */
+            display: none; /* Hidden by default */
+        }
         
+        /* Landing Page Overlay */
+        #landing-page {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85); /* Semi-transparent to see particles */
+            z-index: 100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            text-align: center;
+            backdrop-filter: blur(5px);
+            transition: opacity 0.5s ease-out;
+        }
+        .landing-content {
+            max-width: 900px;
+            padding: 30px;
+            background: rgba(10, 10, 10, 0.9);
+            border: 1px solid #333;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.15);
+            border-radius: 4px;
+        }
+        #landing-page h1 { color: #0ff; text-shadow: 0 0 15px #0ff; margin: 0 0 10px 0; font-size: 2.5rem; letter-spacing: 4px; }
+        #landing-page .subtitle { color: #888; margin-bottom: 40px; font-size: 1rem; letter-spacing: 2px; text-transform: uppercase; }
+        
+        .tutorial-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-bottom: 40px;
+            text-align: left;
+        }
+        @media (max-width: 768px) {
+            .tutorial-grid { grid-template-columns: 1fr; }
+            #landing-page h1 { font-size: 1.8rem; }
+        }
+        .tutorial-card {
+            border: 1px solid #333;
+            padding: 20px;
+            background: rgba(0,0,0,0.6);
+            transition: transform 0.2s;
+        }
+        .tutorial-card:hover { border-color: #555; transform: translateY(-2px); }
+        .tutorial-card h3 { color: #d0f; font-size: 1.1rem; margin-top: 0; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 10px; }
+        .tutorial-card p { font-size: 0.9rem; color: #ccc; line-height: 1.5; margin: 0; }
+        .key-highlight { color: #fff; font-weight: bold; }
+
+        .info-note { margin-bottom: 30px; color: #0ff; font-size: 0.9rem; border-top: 1px solid #333; padding-top: 20px; width: 100%; }
+
+        #start-btn {
+            background: transparent;
+            color: #0ff;
+            border: 2px solid #0ff;
+            padding: 15px 50px;
+            font-size: 1.2rem;
+            font-family: 'Courier New', Courier, monospace;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            transition: 0.3s;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.2);
+            font-weight: bold;
+        }
+        #start-btn:hover {
+            background: #0ff;
+            color: #000;
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.8);
+        }
+        .credits-small { margin-top: 20px; font-size: 0.8rem; color: #444; }
+
         /* UI Overlay */
         #ui-layer {
             position: absolute;
@@ -20,6 +100,7 @@
             color: #0ff;
             text-shadow: 0 0 5px #0ff;
             pointer-events: none;
+            display: none; /* Hidden until start */
         }
         .stat-box {
             background: rgba(0, 0, 0, 0.7);
@@ -41,6 +122,57 @@
             transition: opacity 0.1s ease-out;
         }
 
+        /* Credits & Controls */
+        #credit {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 10px;
+            z-index: 20;
+            pointer-events: none;
+            letter-spacing: 1px;
+            display: none; /* Hidden until start */
+        }
+
+        #controls {
+            position: absolute;
+            top: 30px;
+            right: 15px;
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 8px;
+            display: none; /* Hidden until start */
+        }
+
+        .control-btn {
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid #444;
+            color: #888;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            transition: all 0.3s;
+            pointer-events: auto;
+            text-transform: uppercase;
+            width: 100px;
+            text-align: center;
+        }
+        
+        .control-btn.active {
+            border-color: #0ff;
+            color: #0ff;
+            text-shadow: 0 0 5px #0ff;
+            background: rgba(0, 50, 50, 0.6);
+        }
+
+        .control-btn:hover {
+            background: rgba(30, 30, 30, 0.8);
+        }
+
         /* Canvas orientation normal (Mirror effect handled by logic) */
         canvas { display: block; }
     </style>
@@ -48,7 +180,7 @@
     <!-- 1. Three.js Core -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
-    <!-- 2. Post Processing Dependencies (Order matters for global scripts) -->
+    <!-- 2. Post Processing Dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
@@ -62,14 +194,53 @@
 </head>
 <body>
 
-    <!-- Video Element for MediaPipe (Hidden) -->
+    <!-- Video Element for MediaPipe -->
     <video id="input_video"></video>
+
+    <!-- Landing Page -->
+    <div id="landing-page">
+        <div class="landing-content">
+            <h1>DOMAIN EXPANSION: AR</h1>
+            <p class="subtitle">Gojo Satoru Cursed Technique Simulation</p>
+            
+            <div class="tutorial-grid">
+                <div class="tutorial-card">
+                    <h3>1. BLUE & RED</h3>
+                    <p>Show your hands to activate techniques.<br>
+                    <span class="key-highlight">Left Hand</span> = Reversal Red<br>
+                    <span class="key-highlight">Right Hand</span> = Lapse Blue</p>
+                </div>
+                <div class="tutorial-card">
+                    <h3>2. HOLLOW PURPLE</h3>
+                    <p>Bring your <span class="key-highlight">palms close together</span> to merge the red and blue energies into the imaginary mass.</p>
+                </div>
+                <div class="tutorial-card">
+                    <h3>3. SNAP TO FIRE</h3>
+                    <p>While holding Purple, <span class="key-highlight">PINCH</span> (Thumb + Middle) and <span class="key-highlight">RELEASE</span> quickly to launch the attack.</p>
+                </div>
+            </div>
+
+            <div class="info-note">
+                <p>Toggle <strong>CAM: ON</strong> in the controls to see yourself as Gojo (Webcam Background).</p>
+            </div>
+
+            <button id="start-btn" onclick="startGame()">ENTER VOID</button>
+            <div class="credits-small">Created by HyIsNoob</div>
+        </div>
+    </div>
 
     <!-- UI Logs -->
     <div id="ui-layer">
         <div class="stat-box" id="log-left">LEFT: Searching...</div>
         <div class="stat-box" id="log-right">RIGHT: Searching...</div>
         <div class="stat-box" id="log-system">SYSTEM: Idle</div>
+    </div>
+
+    <!-- Credits & Controls -->
+    <div id="credit">HyIsNoob</div>
+    <div id="controls">
+        <button id="btn-cam" class="control-btn" onclick="toggleCamera()">Cam: OFF</button>
+        <button id="btn-log" class="control-btn active" onclick="toggleLogs()">Logs: ON</button>
     </div>
 
     <!-- Screen Flash -->
@@ -97,11 +268,11 @@
         // Configuration
         const CONFIG = {
             particleCount: 6000, 
-            mergeDistance: 0.20, // Increased for easier activation (was 0.08)
-            breakDistance: 0.40, // Hysteresis: Hands can move apart this much before breaking
+            mergeDistance: 0.20,
+            breakDistance: 0.40,
             hollowRadius: 0.2, 
-            snapThreshold: 0.08, // Threshold for pinch detection
-            bloomStrength: 3.0, // Increased for stronger glow
+            snapThreshold: 0.08, 
+            bloomStrength: 3.0, 
             bloomRadius: 0.6,
             bloomThreshold: 0,
         };
@@ -110,16 +281,18 @@
         let camera, scene, renderer, composer;
         let particleSystem;
         let currentState = STATE.IDLE;
-        let snapPrimed = false; // Tracks if user has pinched and is ready to release (snap)
+        let snapPrimed = false; 
         let appTime = 0;
         let cooldownTimer = 0;
+        let gameStarted = false; // Flag to check if start button pressed
+        let camInstance = null; // Camera instance
         
         // Hand Data Container
         const handsData = {
             left: { present: false, x: 0, y: 0, gesture: 'OPEN', pinchDist: 1 },
             right: { present: false, x: 0, y: 0, gesture: 'OPEN', pinchDist: 1 },
-            distance: 1, // Distance between palms
-            center: new THREE.Vector3() // Midpoint
+            distance: 1, 
+            center: new THREE.Vector3() 
         };
 
         // --- UTILS: TEXTURE GENERATION ---
@@ -137,6 +310,52 @@
             context.fillRect(0, 0, 32, 32);
             const texture = new THREE.CanvasTexture(canvas);
             return texture;
+        }
+
+        // --- CONTROLS LOGIC ---
+        function toggleCamera() {
+            const video = document.getElementById('input_video');
+            const btn = document.getElementById('btn-cam');
+            if (video.style.display === 'block') {
+                video.style.display = 'none';
+                btn.innerText = 'CAM: OFF';
+                btn.classList.remove('active');
+            } else {
+                video.style.display = 'block';
+                btn.innerText = 'CAM: ON';
+                btn.classList.add('active');
+            }
+        }
+
+        function toggleLogs() {
+            const ui = document.getElementById('ui-layer');
+            const btn = document.getElementById('btn-log');
+            if (ui.style.display === 'none') {
+                ui.style.display = 'block';
+                btn.innerText = 'LOGS: ON';
+                btn.classList.add('active');
+            } else {
+                ui.style.display = 'none';
+                btn.innerText = 'LOGS: OFF';
+                btn.classList.remove('active');
+            }
+        }
+
+        // --- START GAME LOGIC ---
+        function startGame() {
+            const landing = document.getElementById('landing-page');
+            landing.style.opacity = '0';
+            setTimeout(() => { landing.style.display = 'none'; }, 500);
+
+            // Show UI elements
+            document.getElementById('ui-layer').style.display = 'block';
+            document.getElementById('credit').style.display = 'block';
+            document.getElementById('controls').style.display = 'flex';
+
+            gameStarted = true;
+            if (camInstance) {
+                camInstance.start();
+            }
         }
 
         // --- PARTICLE SYSTEM ENGINE ---
@@ -221,121 +440,68 @@
                     
                     // Logic Switch based on State
                     if (currentState === STATE.EXPLODING) {
-                        // Explosion: Burst outward violently
-                        // Increase multiplier from 20 to 50 for anime-level impact
+                        // Explosion logic
                         pX += this.velocities[idx] * dt * 50;
                         pY += this.velocities[idx+1] * dt * 50;
                         pZ += this.velocities[idx+2] * dt * 50;
-                        sizes[i] *= 0.92; // Faster fade out
+                        sizes[i] *= 0.92;
 
                     } else if (currentState === STATE.HOLDING || currentState === STATE.MERGING) {
-                        // --- HOLLOW PURPLE LOGIC (ENHANCED VFX) ---
+                        // --- HOLLOW PURPLE LOGIC ---
                         const target = centerPos;
-                        
-                        // Divide particles into complex layers
-                        // Core (30%), Inner Field (20%), Outer Aura (50%)
                         const type = i % 10;
                         const isCore = type < 3; 
                         
                         if (isCore) {
-                            // --- CORE: MULTI-LAYERED SINGULARITY ---
-                            // Layer 1: The Singularity (Center) - High energy white/cyan stroboscope
                             if (type === 0) {
-                                // Super fast random vibration in center
+                                // Singularity
                                 const theta = appTime * 20 + i;
                                 const phi = i * 0.5;
-                                const r = 0.2 * Math.random(); // Dense center
-                                
+                                const r = 0.2 * Math.random(); 
                                 const tx = target.x + Math.sin(theta) * Math.cos(phi) * r;
                                 const ty = target.y + Math.sin(theta) * Math.sin(phi) * r;
                                 const tz = target.z + Math.cos(theta) * r;
-
-                                pX += (tx - pX) * 0.5; // Snappy
-                                pY += (ty - pY) * 0.5;
-                                pZ += (tz - pZ) * 0.5;
-
-                                // Flicker White/Cyan (Blue technique remnant)
+                                pX += (tx - pX) * 0.5; pY += (ty - pY) * 0.5; pZ += (tz - pZ) * 0.5;
                                 const flicker = Math.sin(appTime * 40 + i);
-                                if (flicker > 0) {
-                                    colors[idx] = 1.0; colors[idx+1] = 1.0; colors[idx+2] = 1.0; // White
-                                } else {
-                                    colors[idx] = 0.2; colors[idx+1] = 1.0; colors[idx+2] = 1.0; // Cyan
-                                }
+                                if (flicker > 0) { colors[idx] = 1.0; colors[idx+1] = 1.0; colors[idx+2] = 1.0; } 
+                                else { colors[idx] = 0.2; colors[idx+1] = 1.0; colors[idx+2] = 1.0; }
                                 sizes[i] = 0.4 + Math.random() * 0.4;
-                            } 
-                            // Layer 2: Atomic Orbits (The "Hollow" structure) - Magenta/Purple
-                            else {
-                                // Lissajous knots to simulate complex magnetic fields
-                                const speed = 4.0;
-                                const scale = 1.2; // Medium radius
-                                
-                                // Unique orbit per particle based on index
+                            } else {
+                                // Atomic Orbits
+                                const speed = 4.0; const scale = 1.2;
                                 const angle = this.angles[i] + dt * speed;
                                 this.angles[i] = angle;
-                                
-                                const u = angle;
-                                const v = angle * (1.5 + (i%3)*0.5); // Different frequencies
-                                
-                                // 3D knot shape
+                                const u = angle; const v = angle * (1.5 + (i%3)*0.5);
                                 const tx = target.x + Math.sin(u) * Math.cos(v) * scale;
                                 const ty = target.y + Math.cos(u) * Math.cos(v) * scale;
                                 const tz = target.z + Math.sin(v) * scale;
-
-                                pX += (tx - pX) * 0.2;
-                                pY += (ty - pY) * 0.2;
-                                pZ += (tz - pZ) * 0.2;
-                                
-                                // Hot Pink / Magenta
+                                pX += (tx - pX) * 0.2; pY += (ty - pY) * 0.2; pZ += (tz - pZ) * 0.2;
                                 colors[idx] = 1.0; colors[idx+1] = 0.0; colors[idx+2] = 0.8; 
                                 sizes[i] = 0.2 + Math.random() * 0.2;
                             }
-
                         } else {
-                            // --- AURA: UNSTABLE REALITY TEAR ---
-                            // Massive, glitchy, erasing reality
-                            
+                            // Aura
                             this.angles[i] += dt * 3.0;
-                            
-                            // VISUAL SCALE: Massive
                             const baseScale = 3.5;
-                            
-                            // Chaotic noise for the surface
                             const noise = Math.sin(i * 0.5 + appTime * 8.0);
-                            const spike = (Math.random() > 0.97) ? 2.5 : 1.0; // Occasional lightning spikes
-                            
+                            const spike = (Math.random() > 0.97) ? 2.5 : 1.0; 
                             const r = baseScale * spike + noise * 0.4;
-                            
-                            // 3D Sphere distribution with Z-fighting
                             const tx = target.x + Math.cos(this.angles[i] + i) * r;
                             const ty = target.y + Math.sin(this.angles[i] + i) * r;
                             const tz = target.z + Math.cos(i * 13.0) * r; 
-                            
-                            // Strong jitter
                             const jitter = 0.15;
                             pX += (tx - pX) * 0.1 + (Math.random()-0.5) * jitter;
                             pY += (ty - pY) * 0.1 + (Math.random()-0.5) * jitter;
                             pZ += (tz - pZ) * 0.1 + (Math.random()-0.5) * jitter;
-                            
-                            // Deep Violet mixed with Void Black holes
                             const isVoid = Math.random() > 0.95;
-                            if (isVoid) {
-                                // "Black hole" particles
-                                colors[idx] = 0.1; colors[idx+1] = 0.0; colors[idx+2] = 0.2;
-                            } else {
-                                colors[idx] = colPurpleAura.r; 
-                                colors[idx+1] = colPurpleAura.g; 
-                                colors[idx+2] = colPurpleAura.b;
-                            }
-                            
+                            if (isVoid) { colors[idx] = 0.1; colors[idx+1] = 0.0; colors[idx+2] = 0.2; } 
+                            else { colors[idx] = colPurpleAura.r; colors[idx+1] = colPurpleAura.g; colors[idx+2] = colPurpleAura.b; }
                             sizes[i] = 0.2 + Math.random() * 0.4;
                         }
 
-                        // Prep velocities for massive explosion
-                        const dirX = pX - target.x;
-                        const dirY = pY - target.y;
-                        const dirZ = pZ - target.z;
+                        // Prep explosion velocities
+                        const dirX = pX - target.x; const dirY = pY - target.y; const dirZ = pZ - target.z;
                         const len = Math.sqrt(dirX*dirX + dirY*dirY + dirZ*dirZ) + 0.001;
-                        
                         this.velocities[idx] = (dirX / len) + (Math.random()-0.5)*0.5;
                         this.velocities[idx+1] = (dirY / len) + (Math.random()-0.5)*0.5;
                         this.velocities[idx+2] = (dirZ / len) + (Math.random()-0.5)*0.5;
@@ -349,112 +515,69 @@
                         
                         if (hand.present) {
                             if (hand.gesture === 'FIST') {
-                                // --- FIST: VORTEX ACCRETION (Stronger Spiral) ---
-                                // Simulates a black hole accretion disk with accelerating physics
-                                
+                                // Vortex
                                 const r = this.radii[i];
-
-                                // 1. Physics: Angular Velocity increases drastically near center
-                                // Closer = Faster spin and Stronger Pull
                                 const spinDir = isLeft ? -1 : 1;
-                                // Base spin + accelerating spin as r -> 0. Non-linear boost near center.
                                 const w = spinDir * (5.0 + 12.0 / (r * r + 0.1)); 
                                 this.angles[i] += dt * w;
-
-                                // 2. Radial Velocity (Suction)
-                                // Pull in faster as we get closer.
-                                // Stronger base pull to capture environmental particles quickly.
                                 const suctionSpeed = 3.5 + (4.0 / (r + 0.1));
                                 this.radii[i] -= dt * suctionSpeed;
-
-                                // 3. Reset to FAR OUTSIDE (Environment spawn)
                                 if (this.radii[i] < 0.1) {
-                                    // Spawn far away (4.0 to 10.0 units) to simulate drawing from the entire room
                                     this.radii[i] = 4.0 + Math.random() * 6.0; 
                                     this.angles[i] = Math.random() * Math.PI * 2; 
                                 }
-
                                 const currR = this.radii[i];
-                                
-                                // 4. Spiral Trajectory & Funnel Effect
-                                // As radius shrinks, particles flatten into the accretion disk
                                 const zNoise = Math.sin(i * 12.34) * (currR * 0.4);
-                                
                                 const tx = target.x + Math.cos(this.angles[i]) * currR;
                                 const ty = target.y + Math.sin(this.angles[i]) * currR;
                                 const tz = target.z + zNoise;
-                                
-                                // 5. Update Position
-                                // Variable interpolation: Stiff near center (accretion), looser far out (drift in)
                                 const lerpT = 0.3 + (1.0 / (currR + 1.0)) * 0.5;
-                                
-                                pX += (tx - pX) * lerpT; 
-                                pY += (ty - pY) * lerpT;
-                                pZ += (tz - pZ) * lerpT;
-                                
-                                // 6. Visuals: Hot core
-                                // Brighten and whiten as they approach center
+                                pX += (tx - pX) * lerpT; pY += (ty - pY) * lerpT; pZ += (tz - pZ) * lerpT;
                                 const intensity = 1.0 / (currR * 0.8 + 0.1);
                                 sizes[i] = 0.15 + intensity * 0.25;
-
                                 const coreMix = Math.min(1.0, 0.4 / (currR + 0.1));
                                 colors[idx] = col.r + (1 - col.r) * coreMix;
                                 colors[idx+1] = col.g + (1 - col.g) * coreMix;
                                 colors[idx+2] = col.b + (1 - col.b) * coreMix;
 
                             } else {
-                                // --- OPEN HAND: ORBITAL SHELL (Lazing/Time-Stop) ---
-                                // Particles float in a stable, contained spherical shell around the hand
-                                
-                                // 1. Rotation: Slower, consistent orbit
+                                // Shell
                                 const rotationSpeed = isLeft ? -1.5 : 1.5; 
                                 this.angles[i] += dt * rotationSpeed;
-
-                                // 2. Radius Physics: Drift towards a target shell radius instead of sucking in
-                                // Target radius varies per particle to create depth (1.0 to 2.2 range)
-                                // Hashing index to get a consistent random radius for this particle
                                 const stableRandom = (i % 100) / 100.0;
                                 const targetRadius = 1.2 + stableRandom * 1.5;
-
-                                // Smoothly interpolate logical radius towards target
                                 const diff = targetRadius - this.radii[i];
                                 this.radii[i] += diff * dt * 2.0; 
-
                                 const r = this.radii[i];
-                                
-                                // 3. Vertical/Depth Oscillation (Levitation feel)
                                 const verticalSway = Math.sin(appTime * 1.5 + i * 0.1) * 0.3;
-                                
-                                // 4. Calculate Target Position on Shell
-                                // Create intersecting orbital rings to form a sphere
-                                const zPhase = (i % 20) * 0.3; // Distribute phases
-                                
+                                const zPhase = (i % 20) * 0.3;
                                 const tx = target.x + Math.cos(this.angles[i]) * r;
                                 const ty = target.y + Math.sin(this.angles[i]) * r + verticalSway;
-                                // Tilt the orbit in Z based on the angle and phase to make it spherical
                                 const tz = target.z + Math.sin(this.angles[i] + zPhase) * (r * 0.6); 
-                                
-                                // 5. Soft approach for fluid movement
-                                pX += (tx - pX) * 0.1; // Gentle follow factor (0.1) vs Fist (0.6)
-                                pY += (ty - pY) * 0.1;
-                                pZ += (tz - pZ) * 0.1;
-                                
-                                // Pulsing glow size
+                                pX += (tx - pX) * 0.1; pY += (ty - pY) * 0.1; pZ += (tz - pZ) * 0.1;
                                 sizes[i] = 0.2 + Math.sin(appTime * 2.0 + i) * 0.1;
-
                                 colors[idx] = col.r; colors[idx+1] = col.g; colors[idx+2] = col.b;
                             }
-                            
                         } else {
-                            // Hand lost: Scatter
+                             // Scatter
                             colors[idx] *= 0.9; colors[idx+1] *= 0.9; colors[idx+2] *= 0.9;
                         }
 
                     } else {
-                        // IDLE
+                        // IDLE / BACKGROUND MODE
+                        // Particles drift gently for the landing page background
                         pY += dt * 0.5;
-                        if (pY > 5) pY = -5;
-                        colors[idx] *= 0.95; colors[idx+1] *= 0.95; colors[idx+2] *= 0.95;
+                        if (pY > 5) {
+                            pY = -5;
+                            pX = (Math.random() - 0.5) * 10;
+                            pZ = (Math.random() - 0.5) * 5;
+                            // Reset brightness for loop
+                            colors[idx] = 1; colors[idx+1] = 1; colors[idx+2] = 1;
+                        }
+                        // Gentle fade but keep them visible
+                        colors[idx] = Math.max(0.2, colors[idx] * 0.99); 
+                        colors[idx+1] = Math.max(0.2, colors[idx+1] * 0.99); 
+                        colors[idx+2] = Math.max(0.2, colors[idx+2] * 0.99);
                     }
 
                     positions[idx] = pX;
@@ -470,6 +593,8 @@
 
         // --- GAME LOGIC ---
         function updateLogic() {
+            if (!gameStarted) return; // Only process hand logic if game started
+
             const uiSys = document.getElementById('log-system');
 
             if (currentState === STATE.COOLDOWN) {
@@ -672,14 +797,15 @@
             });
             hands.onResults(onResults);
 
-            const cam = new window.Camera(videoElement, {
+            // Store camera instance globally but don't start yet
+            camInstance = new window.Camera(videoElement, {
                 onFrame: async () => {
                     await hands.send({image: videoElement});
                 },
                 width: 640,
                 height: 480
             });
-            cam.start();
+            // camInstance.start(); // Moved to startGame()
 
             window.addEventListener('resize', onWindowResize, false);
             
