@@ -101,8 +101,8 @@
             breakDistance: 0.40, // Hysteresis: Hands can move apart this much before breaking
             hollowRadius: 0.2, 
             snapThreshold: 0.08, // Threshold for pinch detection
-            bloomStrength: 2.5,
-            bloomRadius: 0.5,
+            bloomStrength: 3.0, // Increased for stronger glow
+            bloomRadius: 0.6,
             bloomThreshold: 0,
         };
 
@@ -194,7 +194,8 @@
                 // Color Definitions
                 const colRed = { r: 1, g: 0.1, b: 0.1 };
                 const colBlue = { r: 0.1, g: 0.3, b: 1 };
-                const colPurple = { r: 0.8, g: 0.2, b: 1 };
+                // Enhanced Purple colors
+                const colPurpleAura = { r: 0.6, g: 0.0, b: 1.0 }; // Deep Violet
 
                 // Pre-calc targets mapped to 3D space
                 const mapTo3D = (x, y) => {
@@ -221,34 +222,123 @@
                     // Logic Switch based on State
                     if (currentState === STATE.EXPLODING) {
                         // Explosion: Burst outward violently
-                        pX += this.velocities[idx] * dt * 20;
-                        pY += this.velocities[idx+1] * dt * 20;
-                        pZ += this.velocities[idx+2] * dt * 20;
-                        sizes[i] *= 0.95; // Fade out
+                        // Increase multiplier from 20 to 50 for anime-level impact
+                        pX += this.velocities[idx] * dt * 50;
+                        pY += this.velocities[idx+1] * dt * 50;
+                        pZ += this.velocities[idx+2] * dt * 50;
+                        sizes[i] *= 0.92; // Faster fade out
 
                     } else if (currentState === STATE.HOLDING || currentState === STATE.MERGING) {
-                        // Purple Ball Logic
+                        // --- HOLLOW PURPLE LOGIC (ENHANCED VFX) ---
                         const target = centerPos;
-                        this.angles[i] += dt * 8; // Super fast spin
                         
-                        const r = (currentState === STATE.MERGING) ? 1.5 : 0.6; 
-                        const noise = Math.sin(i + appTime * 15) * 0.2;
+                        // Divide particles into complex layers
+                        // Core (30%), Inner Field (20%), Outer Aura (50%)
+                        const type = i % 10;
+                        const isCore = type < 3; 
                         
-                        const tx = target.x + Math.cos(this.angles[i] + i) * (r + noise);
-                        const ty = target.y + Math.sin(this.angles[i] + i) * (r + noise);
-                        const tz = target.z + Math.sin(this.angles[i] * 3) * r; 
+                        if (isCore) {
+                            // --- CORE: MULTI-LAYERED SINGULARITY ---
+                            // Layer 1: The Singularity (Center) - High energy white/cyan stroboscope
+                            if (type === 0) {
+                                // Super fast random vibration in center
+                                const theta = appTime * 20 + i;
+                                const phi = i * 0.5;
+                                const r = 0.2 * Math.random(); // Dense center
+                                
+                                const tx = target.x + Math.sin(theta) * Math.cos(phi) * r;
+                                const ty = target.y + Math.sin(theta) * Math.sin(phi) * r;
+                                const tz = target.z + Math.cos(theta) * r;
 
-                        pX += (tx - pX) * 0.15;
-                        pY += (ty - pY) * 0.15;
-                        pZ += (tz - pZ) * 0.15;
+                                pX += (tx - pX) * 0.5; // Snappy
+                                pY += (ty - pY) * 0.5;
+                                pZ += (tz - pZ) * 0.5;
 
-                        colors[idx] = colPurple.r; colors[idx+1] = colPurple.g; colors[idx+2] = colPurple.b;
-                        sizes[i] = 0.4 + Math.random() * 0.3;
+                                // Flicker White/Cyan (Blue technique remnant)
+                                const flicker = Math.sin(appTime * 40 + i);
+                                if (flicker > 0) {
+                                    colors[idx] = 1.0; colors[idx+1] = 1.0; colors[idx+2] = 1.0; // White
+                                } else {
+                                    colors[idx] = 0.2; colors[idx+1] = 1.0; colors[idx+2] = 1.0; // Cyan
+                                }
+                                sizes[i] = 0.4 + Math.random() * 0.4;
+                            } 
+                            // Layer 2: Atomic Orbits (The "Hollow" structure) - Magenta/Purple
+                            else {
+                                // Lissajous knots to simulate complex magnetic fields
+                                const speed = 4.0;
+                                const scale = 1.2; // Medium radius
+                                
+                                // Unique orbit per particle based on index
+                                const angle = this.angles[i] + dt * speed;
+                                this.angles[i] = angle;
+                                
+                                const u = angle;
+                                const v = angle * (1.5 + (i%3)*0.5); // Different frequencies
+                                
+                                // 3D knot shape
+                                const tx = target.x + Math.sin(u) * Math.cos(v) * scale;
+                                const ty = target.y + Math.cos(u) * Math.cos(v) * scale;
+                                const tz = target.z + Math.sin(v) * scale;
 
-                        // Prep velocities for potential explosion
-                        this.velocities[idx] = (Math.random() - 0.5);
-                        this.velocities[idx+1] = (Math.random() - 0.5);
-                        this.velocities[idx+2] = (Math.random() - 0.5);
+                                pX += (tx - pX) * 0.2;
+                                pY += (ty - pY) * 0.2;
+                                pZ += (tz - pZ) * 0.2;
+                                
+                                // Hot Pink / Magenta
+                                colors[idx] = 1.0; colors[idx+1] = 0.0; colors[idx+2] = 0.8; 
+                                sizes[i] = 0.2 + Math.random() * 0.2;
+                            }
+
+                        } else {
+                            // --- AURA: UNSTABLE REALITY TEAR ---
+                            // Massive, glitchy, erasing reality
+                            
+                            this.angles[i] += dt * 3.0;
+                            
+                            // VISUAL SCALE: Massive
+                            const baseScale = 3.5;
+                            
+                            // Chaotic noise for the surface
+                            const noise = Math.sin(i * 0.5 + appTime * 8.0);
+                            const spike = (Math.random() > 0.97) ? 2.5 : 1.0; // Occasional lightning spikes
+                            
+                            const r = baseScale * spike + noise * 0.4;
+                            
+                            // 3D Sphere distribution with Z-fighting
+                            const tx = target.x + Math.cos(this.angles[i] + i) * r;
+                            const ty = target.y + Math.sin(this.angles[i] + i) * r;
+                            const tz = target.z + Math.cos(i * 13.0) * r; 
+                            
+                            // Strong jitter
+                            const jitter = 0.15;
+                            pX += (tx - pX) * 0.1 + (Math.random()-0.5) * jitter;
+                            pY += (ty - pY) * 0.1 + (Math.random()-0.5) * jitter;
+                            pZ += (tz - pZ) * 0.1 + (Math.random()-0.5) * jitter;
+                            
+                            // Deep Violet mixed with Void Black holes
+                            const isVoid = Math.random() > 0.95;
+                            if (isVoid) {
+                                // "Black hole" particles
+                                colors[idx] = 0.1; colors[idx+1] = 0.0; colors[idx+2] = 0.2;
+                            } else {
+                                colors[idx] = colPurpleAura.r; 
+                                colors[idx+1] = colPurpleAura.g; 
+                                colors[idx+2] = colPurpleAura.b;
+                            }
+                            
+                            sizes[i] = 0.2 + Math.random() * 0.4;
+                        }
+
+                        // Prep velocities for massive explosion
+                        const dirX = pX - target.x;
+                        const dirY = pY - target.y;
+                        const dirZ = pZ - target.z;
+                        const len = Math.sqrt(dirX*dirX + dirY*dirY + dirZ*dirZ) + 0.001;
+                        
+                        this.velocities[idx] = (dirX / len) + (Math.random()-0.5)*0.5;
+                        this.velocities[idx+1] = (dirY / len) + (Math.random()-0.5)*0.5;
+                        this.velocities[idx+2] = (dirZ / len) + (Math.random()-0.5)*0.5;
 
                     } else if (currentState === STATE.SINGLE) {
                         // Red / Blue Logic
@@ -259,40 +349,58 @@
                         
                         if (hand.present) {
                             if (hand.gesture === 'FIST') {
-                                // --- FIST: UPGRADED VORTEX ACCRETION ---
+                                // --- FIST: VORTEX ACCRETION (Stronger Spiral) ---
                                 // Simulates a black hole accretion disk with accelerating physics
                                 
                                 const r = this.radii[i];
 
-                                // 1. Physics: Conservation of angular momentum & Gravity
+                                // 1. Physics: Angular Velocity increases drastically near center
                                 // Closer = Faster spin and Stronger Pull
-                                const proximity = 1.0 / (r + 0.1); 
-                                
-                                // Base Speed + Acceleration curve
-                                const spinSpeed = (isLeft ? -3.0 : 3.0) * (1.0 + proximity * 1.5);
-                                const pullSpeed = 1.5 + (proximity * 4.0); // Rapidly increasing suction
+                                const spinDir = isLeft ? -1 : 1;
+                                // Base spin + accelerating spin as r -> 0. Non-linear boost near center.
+                                const w = spinDir * (5.0 + 12.0 / (r * r + 0.1)); 
+                                this.angles[i] += dt * w;
 
-                                this.angles[i] += dt * spinSpeed;
-                                this.radii[i] -= dt * pullSpeed;
+                                // 2. Radial Velocity (Suction)
+                                // Pull in faster as we get closer.
+                                // Stronger base pull to capture environmental particles quickly.
+                                const suctionSpeed = 3.5 + (4.0 / (r + 0.1));
+                                this.radii[i] -= dt * suctionSpeed;
 
-                                // 2. Reset to FAR OUTSIDE (Environment spawn)
-                                if (this.radii[i] < CONFIG.hollowRadius) {
-                                    this.radii[i] = 4.0 + Math.random() * 3.5; // Spawn radius 4.0 - 7.5
+                                // 3. Reset to FAR OUTSIDE (Environment spawn)
+                                if (this.radii[i] < 0.1) {
+                                    // Spawn far away (4.0 to 10.0 units) to simulate drawing from the entire room
+                                    this.radii[i] = 4.0 + Math.random() * 6.0; 
                                     this.angles[i] = Math.random() * Math.PI * 2; 
                                 }
 
                                 const currR = this.radii[i];
                                 
+                                // 4. Spiral Trajectory & Funnel Effect
+                                // As radius shrinks, particles flatten into the accretion disk
+                                const zNoise = Math.sin(i * 12.34) * (currR * 0.4);
+                                
                                 const tx = target.x + Math.cos(this.angles[i]) * currR;
                                 const ty = target.y + Math.sin(this.angles[i]) * currR;
+                                const tz = target.z + zNoise;
                                 
-                                // Tighter follow for snappy, powerful lines
-                                pX += (tx - pX) * 0.6; 
-                                pY += (ty - pY) * 0.6;
-                                pZ += (target.z - pZ) * 0.6;
+                                // 5. Update Position
+                                // Variable interpolation: Stiff near center (accretion), looser far out (drift in)
+                                const lerpT = 0.3 + (1.0 / (currR + 1.0)) * 0.5;
                                 
-                                // Size: Large concentration near center, smaller trails outside
-                                sizes[i] = 0.15 + (1.0 / (currR + 0.5)) * 0.25;
+                                pX += (tx - pX) * lerpT; 
+                                pY += (ty - pY) * lerpT;
+                                pZ += (tz - pZ) * lerpT;
+                                
+                                // 6. Visuals: Hot core
+                                // Brighten and whiten as they approach center
+                                const intensity = 1.0 / (currR * 0.8 + 0.1);
+                                sizes[i] = 0.15 + intensity * 0.25;
+
+                                const coreMix = Math.min(1.0, 0.4 / (currR + 0.1));
+                                colors[idx] = col.r + (1 - col.r) * coreMix;
+                                colors[idx+1] = col.g + (1 - col.g) * coreMix;
+                                colors[idx+2] = col.b + (1 - col.b) * coreMix;
 
                             } else {
                                 // --- OPEN HAND: ORBITAL SHELL (Lazing/Time-Stop) ---
@@ -333,10 +441,10 @@
                                 
                                 // Pulsing glow size
                                 sizes[i] = 0.2 + Math.sin(appTime * 2.0 + i) * 0.1;
+
+                                colors[idx] = col.r; colors[idx+1] = col.g; colors[idx+2] = col.b;
                             }
                             
-                            colors[idx] = col.r; colors[idx+1] = col.g; colors[idx+2] = col.b;
-
                         } else {
                             // Hand lost: Scatter
                             colors[idx] *= 0.9; colors[idx+1] *= 0.9; colors[idx+2] *= 0.9;
