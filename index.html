@@ -296,7 +296,9 @@
         let camera, scene, renderer, composer;
         let particleSystem;
         let currentState = STATE.IDLE;
+        let lastState = STATE.IDLE; // To track transitions
         let snapPrimed = false; 
+        let lastSnapPrimed = false;
         let appTime = 0;
         let cooldownTimer = 0;
         let gameStarted = false; // Flag to check if start button pressed
@@ -304,11 +306,247 @@
         
         // Hand Data Container
         const handsData = {
-            left: { present: false, x: 0, y: 0, gesture: 'OPEN', pinchDist: 1 },
-            right: { present: false, x: 0, y: 0, gesture: 'OPEN', pinchDist: 1 },
+            left: { present: false, x: 0, y: 0, gesture: 'OPEN', lastGesture: 'NONE', pinchDist: 1 },
+            right: { present: false, x: 0, y: 0, gesture: 'OPEN', lastGesture: 'NONE', pinchDist: 1 },
             distance: 1, 
             center: new THREE.Vector3() 
         };
+
+        // --- SOUND MANAGER (Web Audio API) ---
+        class SoundManager {
+            constructor() {
+                this.ctx = null;
+                this.initialized = false;
+                this.loops = {
+                    hold: null,
+                    charge: null
+                };
+                
+                // Track active SFX states to avoid spamming start calls
+                this.activeStates = {
+                    red: 'NONE',  // 'OPEN', 'FIST', 'NONE'
+                    blue: 'NONE'
+                };
+            }
+
+            init() {
+                if (this.initialized) return;
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                this.ctx = new AudioContext();
+                this.masterGain = this.ctx.createGain();
+                this.masterGain.gain.value = 0.4;
+                this.masterGain.connect(this.ctx.destination);
+                this.initialized = true;
+                
+                // Warm up
+                this.ctx.resume();
+            }
+
+            // --- RED TECHNIQUE PLACEHOLDERS ---
+            playRedOpen() {
+                if (this.activeStates.red === 'OPEN') return;
+                this.stopRed(); // Clean up prev
+                this.activeStates.red = 'OPEN';
+                console.log("SFX: Start RED OPEN loop");
+                // TODO: Add your Red Open sound code here
+            }
+
+            playRedFist() {
+                if (this.activeStates.red === 'FIST') return;
+                this.stopRed(); // Clean up prev
+                this.activeStates.red = 'FIST';
+                console.log("SFX: Start RED FIST loop");
+                // TODO: Add your Red Fist sound code here
+            }
+
+            stopRed() {
+                if (this.activeStates.red === 'NONE') return;
+                console.log("SFX: Stop RED loop");
+                this.activeStates.red = 'NONE';
+                // TODO: Stop any active Red sounds here
+            }
+
+            // --- BLUE TECHNIQUE PLACEHOLDERS ---
+            playBlueOpen() {
+                if (this.activeStates.blue === 'OPEN') return;
+                this.stopBlue(); // Clean up prev
+                this.activeStates.blue = 'OPEN';
+                console.log("SFX: Start BLUE OPEN loop");
+                // TODO: Add your Blue Open sound code here
+            }
+
+            playBlueFist() {
+                if (this.activeStates.blue === 'FIST') return;
+                this.stopBlue(); // Clean up prev
+                this.activeStates.blue = 'FIST';
+                console.log("SFX: Start BLUE FIST loop");
+                // TODO: Add your Blue Fist sound code here
+            }
+
+            stopBlue() {
+                if (this.activeStates.blue === 'NONE') return;
+                console.log("SFX: Stop BLUE loop");
+                this.activeStates.blue = 'NONE';
+                // TODO: Stop any active Blue sounds here
+            }
+
+            // --- CORE SFX ---
+            // Procedural Merge Sound (Energy gathering)
+            playMerge() {
+                if (!this.ctx) return;
+                const t = this.ctx.currentTime;
+                
+                const osc1 = this.ctx.createOscillator();
+                const osc2 = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+
+                osc1.frequency.setValueAtTime(100, t);
+                osc1.frequency.exponentialRampToValueAtTime(600, t + 1.0);
+                
+                osc2.frequency.setValueAtTime(800, t);
+                osc2.frequency.exponentialRampToValueAtTime(600, t + 1.0);
+
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(0.5, t + 0.5);
+                gain.gain.linearRampToValueAtTime(0, t + 1.2);
+
+                osc1.connect(gain);
+                osc2.connect(gain);
+                gain.connect(this.masterGain);
+
+                osc1.start(t);
+                osc2.start(t);
+                osc1.stop(t + 1.2);
+                osc2.stop(t + 1.2);
+            }
+
+            startHoldLoop() {
+                if (!this.ctx || this.loops.hold) return;
+                const t = this.ctx.currentTime;
+                
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                const lfo = this.ctx.createOscillator();
+                const lfoGain = this.ctx.createGain();
+
+                // Heavy Bass Drone
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(55, t); // Low A
+
+                // LFO for instability/throbbing
+                lfo.frequency.setValueAtTime(8, t); // 8Hz flutter
+                lfoGain.gain.value = 50; // Modulate frequency slightly
+
+                lfo.connect(lfoGain);
+                lfoGain.connect(osc.frequency);
+                
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(0.2, t + 1);
+
+                osc.connect(gain);
+                gain.connect(this.masterGain);
+                
+                osc.start(t);
+                lfo.start(t);
+
+                this.loops.hold = { nodes: [osc, gain, lfo, lfoGain] };
+            }
+
+            stopHoldLoop() {
+                if (this.loops.hold) {
+                    const t = this.ctx.currentTime;
+                    const { nodes } = this.loops.hold;
+                    // Fade out
+                    nodes[1].gain.cancelScheduledValues(t);
+                    nodes[1].gain.linearRampToValueAtTime(0, t + 0.2);
+                    
+                    setTimeout(() => {
+                        nodes.forEach(n => { try{ n.stop(); }catch(e){} try{ n.disconnect(); }catch(e){} });
+                    }, 250);
+                    this.loops.hold = null;
+                }
+            }
+
+            startChargeLoop() {
+                if (!this.ctx || this.loops.charge) return;
+                const t = this.ctx.currentTime;
+
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(200, t);
+                osc.frequency.exponentialRampToValueAtTime(800, t + 3); // Rising tension
+
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(0.3, t + 0.1);
+
+                osc.connect(gain);
+                gain.connect(this.masterGain);
+
+                osc.start(t);
+                this.loops.charge = { nodes: [osc, gain] };
+            }
+
+            stopChargeLoop() {
+                if (this.loops.charge) {
+                    const t = this.ctx.currentTime;
+                    const { nodes } = this.loops.charge;
+                    nodes[1].gain.cancelScheduledValues(t);
+                    nodes[1].gain.linearRampToValueAtTime(0, t + 0.1);
+                    setTimeout(() => {
+                        nodes.forEach(n => { try{ n.stop(); }catch(e){} try{ n.disconnect(); }catch(e){} });
+                    }, 150);
+                    this.loops.charge = null;
+                }
+            }
+
+            playExplosion() {
+                if (!this.ctx) return;
+                const t = this.ctx.currentTime;
+
+                // 1. Noise Burst
+                const bufferSize = this.ctx.sampleRate * 2.0;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = (Math.random() * 2 - 1);
+                }
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                
+                // Filter the noise to sound like a boom, not hiss
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(1000, t);
+                filter.frequency.exponentialRampToValueAtTime(100, t + 1);
+
+                const noiseGain = this.ctx.createGain();
+                noiseGain.gain.setValueAtTime(2.0, t);
+                noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 1.5);
+
+                noise.connect(filter);
+                filter.connect(noiseGain);
+                noiseGain.connect(this.masterGain);
+                noise.start(t);
+
+                // 2. Sub Drop (The "Impact")
+                const sub = this.ctx.createOscillator();
+                const subGain = this.ctx.createGain();
+                sub.frequency.setValueAtTime(150, t);
+                sub.frequency.exponentialRampToValueAtTime(10, t + 1);
+                
+                subGain.gain.setValueAtTime(1.0, t);
+                subGain.gain.exponentialRampToValueAtTime(0.01, t + 1);
+
+                sub.connect(subGain);
+                subGain.connect(this.masterGain);
+                sub.start(t);
+                sub.stop(t + 1);
+            }
+        }
+
+        const sfx = new SoundManager();
 
         // --- UTILS: TEXTURE GENERATION ---
         function createGlowTexture() {
@@ -366,6 +604,9 @@
             document.getElementById('ui-layer').style.display = 'block';
             document.getElementById('credit').style.display = 'block';
             document.getElementById('controls').style.display = 'flex';
+
+            // Init Audio
+            sfx.init();
 
             gameStarted = true;
             if (camInstance) {
@@ -465,34 +706,57 @@
                         sizes[i] *= 0.92;
 
                     } else if (currentState === STATE.MERGING) {
-                        // --- FORMING STATE (Red and Blue Colliding) ---
-                        // Particles flow from Red/Blue Hands towards Center
+                        // --- IMPROVED MERGING VISUALS ---
                         const isRed = i % 2 === 0;
                         const sourcePos = isRed ? leftPos : rightPos;
                         
-                        // Deterministic progress for flow effect
-                        const flowSpeed = 1.5;
+                        // Helix Calculation
+                        const flowSpeed = 2.0; // Faster merge
                         const lifeOffset = (i % 100) / 100;
                         let t = (appTime * flowSpeed + lifeOffset) % 1.0;
-                        // t = 0 (at source) -> 1 (at center)
+                        // t = 0 (hand) -> 1 (center)
+
+                        // Base Linear Path
+                        const vecX = centerPos.x - sourcePos.x;
+                        const vecY = centerPos.y - sourcePos.y;
+                        const vecZ = centerPos.z - sourcePos.z;
                         
-                        // Lerp
-                        const mx = sourcePos.x + (centerPos.x - sourcePos.x) * t;
-                        const my = sourcePos.y + (centerPos.y - sourcePos.y) * t;
-                        const mz = sourcePos.z + (centerPos.z - sourcePos.z) * t;
+                        // Helix Radius (Wide at hand, tight at center)
+                        const helixRadius = 1.0 * (1.0 - t) + 0.1;
+                        // Spin
+                        const spinRate = 15.0;
+                        const angle = t * spinRate + i;
                         
-                        // Add Chaos/Noise to path
-                        const noiseScale = 1.0 * Math.sin(t * Math.PI); // Max noise in middle
-                        const angle = appTime * 10 + i;
-                        
-                        pX += (mx + Math.cos(angle) * 0.5 * noiseScale - pX) * 0.2;
-                        pY += (my + Math.sin(angle) * 0.5 * noiseScale - pY) * 0.2;
-                        pZ += (mz + Math.sin(angle * 3) * 0.5 * noiseScale - pZ) * 0.2;
-                        
-                        // Colors: Pure Red / Pure Blue mixing
-                        if (isRed) { colors[idx] = 1.0; colors[idx+1] = 0.0; colors[idx+2] = 0.0; } 
-                        else { colors[idx] = 0.0; colors[idx+1] = 0.2; colors[idx+2] = 1.0; }
-                        sizes[i] = 0.3;
+                        // Perpendicular vectors for 3D rotation around the path
+                        // Simplified: rotate around Z axis relative to path? 
+                        // Just adding simple trig noise perpendicular to motion is easier and looks good
+                        const perpX = Math.sin(angle) * helixRadius;
+                        const perpY = Math.cos(angle) * helixRadius;
+                        const perpZ = Math.sin(angle * 2.5) * helixRadius;
+
+                        // Target Position
+                        const tx = sourcePos.x + vecX * t + perpX * 0.5;
+                        const ty = sourcePos.y + vecY * t + perpY * 0.5;
+                        const tz = sourcePos.z + vecZ * t + perpZ * 0.5;
+
+                        // Lerp for smoothness
+                        pX += (tx - pX) * 0.3;
+                        pY += (ty - pY) * 0.3;
+                        pZ += (tz - pZ) * 0.3;
+
+                        // Dynamic Color Mixing
+                        // Starts Pure Red/Blue -> Becomes Violet/White at center (t > 0.8)
+                        if (t > 0.8) {
+                            const mix = (t - 0.8) * 5.0; // 0 to 1
+                            colors[idx] = 1.0; // White hot
+                            colors[idx+1] = mix; 
+                            colors[idx+2] = 1.0;
+                            sizes[i] = 0.4 + Math.random() * 0.3;
+                        } else {
+                            if (isRed) { colors[idx] = 1.0; colors[idx+1] = 0.0; colors[idx+2] = 0.0; }
+                            else { colors[idx] = 0.0; colors[idx+1] = 0.2; colors[idx+2] = 1.0; }
+                            sizes[i] = 0.2;
+                        }
 
                     } else if (currentState === STATE.HOLDING) {
                         // --- HOLLOW PURPLE LOGIC (Enhanced Center) ---
@@ -609,30 +873,60 @@
                         
                         if (hand.present) {
                             if (hand.gesture === 'FIST') {
-                                // Vortex
-                                const r = this.radii[i];
+                                // IMPROVED: Black Hole / Vortex Accretion
                                 const spinDir = isLeft ? -1 : 1;
-                                const w = spinDir * (5.0 + 12.0 / (r * r + 0.1)); 
-                                this.angles[i] += dt * w;
-                                const suctionSpeed = 3.5 + (4.0 / (r + 0.1));
-                                this.radii[i] -= dt * suctionSpeed;
-                                if (this.radii[i] < 0.1) {
-                                    this.radii[i] = 4.0 + Math.random() * 6.0; 
-                                    this.angles[i] = Math.random() * Math.PI * 2; 
+                                
+                                // 1. Accelerate Suction (Gravity)
+                                // Far away = slower, Close = very fast
+                                const gravity = 4.0 + (6.0 / (this.radii[i] + 0.1)); 
+                                this.radii[i] -= dt * gravity;
+
+                                // 2. Accelerate Spin (Conservation of Angular Momentum)
+                                const spinSpeed = 3.0 + (25.0 / (this.radii[i]*this.radii[i] + 0.1));
+                                this.angles[i] += dt * spinDir * spinSpeed;
+
+                                // 3. Respawn / Event Horizon
+                                let justRespawned = false;
+                                if (this.radii[i] < 0.15) {
+                                    this.radii[i] = 8.0 + Math.random() * 6.0; // Wide spawn range
+                                    this.angles[i] = Math.random() * Math.PI * 2;
+                                    justRespawned = true;
                                 }
+                                
                                 const currR = this.radii[i];
-                                const zNoise = Math.sin(i * 12.34) * (currR * 0.4);
+                                
+                                // 4. Target Calculation with Z-Vortex
+                                const diskTilt = (isLeft ? 0.3 : -0.3) * currR; // Tilt the disk
+                                const zWobble = Math.sin(appTime * 8.0 + currR) * 0.15;
+                                
                                 const tx = target.x + Math.cos(this.angles[i]) * currR;
                                 const ty = target.y + Math.sin(this.angles[i]) * currR;
-                                const tz = target.z + zNoise;
-                                const lerpT = 0.3 + (1.0 / (currR + 1.0)) * 0.5;
-                                pX += (tx - pX) * lerpT; pY += (ty - pY) * lerpT; pZ += (tz - pZ) * lerpT;
-                                const intensity = 1.0 / (currR * 0.8 + 0.1);
-                                sizes[i] = 0.15 + intensity * 0.25;
-                                const coreMix = Math.min(1.0, 0.4 / (currR + 0.1));
-                                colors[idx] = col.r + (1 - col.r) * coreMix;
-                                colors[idx+1] = col.g + (1 - col.g) * coreMix;
-                                colors[idx+2] = col.b + (1 - col.b) * coreMix;
+                                const tz = target.z + diskTilt + zWobble;
+
+                                // 5. Position Update
+                                if (justRespawned) {
+                                    // Teleport to start to prevent outward streaks -> Pure suction look
+                                    pX = tx; pY = ty; pZ = tz;
+                                } else {
+                                    // High lerp for tight spiral following
+                                    const lerpT = 0.5; 
+                                    pX += (tx - pX) * lerpT;
+                                    pY += (ty - pY) * lerpT;
+                                    pZ += (tz - pZ) * lerpT;
+                                }
+
+                                // 6. Appearance
+                                // Size: Large chunks at center, dust at edges
+                                const proximity = 1.0 / (currR * 0.5 + 0.2); 
+                                sizes[i] = 0.15 + proximity * 0.35; 
+
+                                // Color: Fade in at edges, White hot at center
+                                const edgeFade = Math.min(1.0, Math.max(0, (14.0 - currR) * 0.5)); // Alpha fade in
+                                const coreHeat = Math.min(1.0, 1.2 / (currR + 0.1)); // White mix
+
+                                colors[idx] = (col.r + (1.0 - col.r) * coreHeat) * edgeFade;
+                                colors[idx+1] = (col.g + (1.0 - col.g) * coreHeat) * edgeFade;
+                                colors[idx+2] = (col.b + (1.0 - col.b) * coreHeat) * edgeFade;
 
                             } else {
                                 // Shell
@@ -690,6 +984,73 @@
             if (!gameStarted) return; // Only process hand logic if game started
 
             const uiSys = document.getElementById('log-system');
+
+            // --- AUDIO STATE MANAGEMENT ---
+            
+            // Handle State Audio Transitions
+            if (currentState === STATE.MERGING && lastState !== STATE.MERGING) {
+                sfx.playMerge();
+                sfx.stopHoldLoop();
+                sfx.stopChargeLoop();
+                // Ensure Single Hand SFX are stopped
+                sfx.stopRed();
+                sfx.stopBlue();
+            }
+            
+            if (currentState === STATE.HOLDING && lastState !== STATE.HOLDING) {
+                sfx.startHoldLoop();
+            }
+
+            if (currentState === STATE.HOLDING) {
+                if (snapPrimed && !lastSnapPrimed) {
+                    sfx.stopHoldLoop();
+                    sfx.startChargeLoop();
+                } else if (!snapPrimed && lastSnapPrimed) {
+                    sfx.stopChargeLoop();
+                    sfx.startHoldLoop();
+                }
+            }
+
+            if (currentState === STATE.EXPLODING && lastState !== STATE.EXPLODING) {
+                sfx.stopHoldLoop();
+                sfx.stopChargeLoop();
+                sfx.playExplosion();
+            }
+            
+            if ((currentState === STATE.IDLE || currentState === STATE.SINGLE) && 
+                (lastState === STATE.HOLDING || lastState === STATE.MERGING || lastState === STATE.EXPLODING)) {
+                sfx.stopHoldLoop();
+                sfx.stopChargeLoop();
+            }
+
+            // --- RED/BLUE INDIVIDUAL SFX LOGIC ---
+            if (currentState === STATE.SINGLE) {
+                // Left Hand (Red)
+                if (handsData.left.present) {
+                    if (handsData.left.gesture === 'FIST') sfx.playRedFist();
+                    else sfx.playRedOpen();
+                } else {
+                    sfx.stopRed();
+                }
+
+                // Right Hand (Blue)
+                if (handsData.right.present) {
+                    if (handsData.right.gesture === 'FIST') sfx.playBlueFist();
+                    else sfx.playBlueOpen();
+                } else {
+                    sfx.stopBlue();
+                }
+            } else {
+                // If not in single mode (e.g. merging, holding), ensure single SFX are off
+                sfx.stopRed();
+                sfx.stopBlue();
+            }
+
+
+            // Update Last States
+            lastState = currentState;
+            lastSnapPrimed = snapPrimed;
+
 
             if (currentState === STATE.COOLDOWN) {
                 cooldownTimer -= 0.016; 
@@ -839,6 +1200,7 @@
                     data.present = true;
                     data.x = 1.0 - palm.x; 
                     data.y = palm.y;
+                    data.lastGesture = data.gesture; 
                     data.gesture = isFist ? 'FIST' : 'OPEN';
                     data.pinchDist = pinchDist;
 
@@ -861,7 +1223,6 @@
             renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true }); 
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
-            // FIX: Append to container, not body, to respect Z-Index relative to video
             container.appendChild(renderer.domElement);
 
             const renderScene = new THREE.RenderPass(scene, camera);
@@ -892,7 +1253,6 @@
             });
             hands.onResults(onResults);
 
-            // Store camera instance globally but don't start yet
             camInstance = new window.Camera(videoElement, {
                 onFrame: async () => {
                     await hands.send({image: videoElement});
@@ -900,8 +1260,7 @@
                 width: 640,
                 height: 480
             });
-            // camInstance.start(); // Moved to startGame()
-
+            
             window.addEventListener('resize', onWindowResize, false);
             
             animate();
