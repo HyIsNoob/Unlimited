@@ -6,19 +6,25 @@
     <title>Gojo Satoru AR Experience</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
-        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
         
-        /* Video Background (Toggleable) */
+        /* Container ensures canvas is on top */
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
+        
+        /* Video Background (Toggleable Mini-Window) */
         #input_video { 
             position: absolute; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%; 
+            bottom: 20px; 
+            right: 20px; 
+            width: 320px; 
+            height: 240px; 
             object-fit: cover; 
-            z-index: 0; 
+            z-index: 50; /* On top of everything */
             transform: scaleX(-1); /* Mirror effect */
             display: none; /* Hidden by default */
+            border-radius: 12px;
+            border: 2px solid #333;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+            filter: grayscale(100%) contrast(1.2) brightness(0.8);
         }
         
         /* Landing Page Overlay */
@@ -173,8 +179,14 @@
             background: rgba(30, 30, 30, 0.8);
         }
 
-        /* Canvas orientation normal (Mirror effect handled by logic) */
-        canvas { display: block; }
+        /* Canvas orientation */
+        canvas { 
+            display: block; 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            z-index: 5; /* Ensure canvas is above video */
+        }
     </style>
 
     <!-- 1. Three.js Core -->
@@ -196,6 +208,9 @@
 
     <!-- Video Element for MediaPipe -->
     <video id="input_video"></video>
+    
+    <!-- Canvas Container -->
+    <div id="canvas-container"></div>
 
     <!-- Landing Page -->
     <div id="landing-page">
@@ -221,7 +236,7 @@
             </div>
 
             <div class="info-note">
-                <p>Toggle <strong>CAM: ON</strong> in the controls to see yourself as Gojo (Webcam Background).</p>
+                <p>Use the <strong>CAM: ON</strong> toggle to open a reference monitor.</p>
             </div>
 
             <button id="start-btn" onclick="startGame()">ENTER VOID</button>
@@ -267,12 +282,12 @@
 
         // Configuration
         const CONFIG = {
-            particleCount: 6000, 
+            particleCount: 6500, // Slight increase for density
             mergeDistance: 0.20,
             breakDistance: 0.40,
             hollowRadius: 0.2, 
             snapThreshold: 0.08, 
-            bloomStrength: 3.0, 
+            bloomStrength: 3.5, 
             bloomRadius: 0.6,
             bloomThreshold: 0,
         };
@@ -373,6 +388,7 @@
                 this.velocities = new Float32Array(this.count * 3);
                 this.angles = new Float32Array(this.count); // For spiraling
                 this.radii = new Float32Array(this.count); // Distance from center
+                this.randoms = new Float32Array(this.count); // Static random for deterministic role assignment
 
                 for (let i = 0; i < this.count; i++) {
                     positions[i * 3] = (Math.random() - 0.5) * 10;
@@ -384,6 +400,7 @@
                     this.angles[i] = Math.random() * Math.PI * 2;
                     // Init radii spread out
                     this.radii[i] = 0.5 + Math.random() * 3.0; 
+                    this.randoms[i] = Math.random();
                 }
 
                 this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -415,6 +432,7 @@
                 const colBlue = { r: 0.1, g: 0.3, b: 1 };
                 // Enhanced Purple colors
                 const colPurpleAura = { r: 0.6, g: 0.0, b: 1.0 }; // Deep Violet
+                const colCyan = { r: 0.2, g: 0.9, b: 1.0 }; 
 
                 // Pre-calc targets mapped to 3D space
                 const mapTo3D = (x, y) => {
@@ -446,56 +464,132 @@
                         pZ += this.velocities[idx+2] * dt * 50;
                         sizes[i] *= 0.92;
 
-                    } else if (currentState === STATE.HOLDING || currentState === STATE.MERGING) {
-                        // --- HOLLOW PURPLE LOGIC ---
-                        const target = centerPos;
-                        const type = i % 10;
-                        const isCore = type < 3; 
+                    } else if (currentState === STATE.MERGING) {
+                        // --- FORMING STATE (Red and Blue Colliding) ---
+                        // Particles flow from Red/Blue Hands towards Center
+                        const isRed = i % 2 === 0;
+                        const sourcePos = isRed ? leftPos : rightPos;
                         
-                        if (isCore) {
-                            if (type === 0) {
-                                // Singularity
-                                const theta = appTime * 20 + i;
-                                const phi = i * 0.5;
-                                const r = 0.2 * Math.random(); 
-                                const tx = target.x + Math.sin(theta) * Math.cos(phi) * r;
-                                const ty = target.y + Math.sin(theta) * Math.sin(phi) * r;
-                                const tz = target.z + Math.cos(theta) * r;
-                                pX += (tx - pX) * 0.5; pY += (ty - pY) * 0.5; pZ += (tz - pZ) * 0.5;
-                                const flicker = Math.sin(appTime * 40 + i);
-                                if (flicker > 0) { colors[idx] = 1.0; colors[idx+1] = 1.0; colors[idx+2] = 1.0; } 
-                                else { colors[idx] = 0.2; colors[idx+1] = 1.0; colors[idx+2] = 1.0; }
-                                sizes[i] = 0.4 + Math.random() * 0.4;
-                            } else {
-                                // Atomic Orbits
-                                const speed = 4.0; const scale = 1.2;
-                                const angle = this.angles[i] + dt * speed;
-                                this.angles[i] = angle;
-                                const u = angle; const v = angle * (1.5 + (i%3)*0.5);
-                                const tx = target.x + Math.sin(u) * Math.cos(v) * scale;
-                                const ty = target.y + Math.cos(u) * Math.cos(v) * scale;
-                                const tz = target.z + Math.sin(v) * scale;
-                                pX += (tx - pX) * 0.2; pY += (ty - pY) * 0.2; pZ += (tz - pZ) * 0.2;
-                                colors[idx] = 1.0; colors[idx+1] = 0.0; colors[idx+2] = 0.8; 
-                                sizes[i] = 0.2 + Math.random() * 0.2;
-                            }
+                        // Deterministic progress for flow effect
+                        const flowSpeed = 1.5;
+                        const lifeOffset = (i % 100) / 100;
+                        let t = (appTime * flowSpeed + lifeOffset) % 1.0;
+                        // t = 0 (at source) -> 1 (at center)
+                        
+                        // Lerp
+                        const mx = sourcePos.x + (centerPos.x - sourcePos.x) * t;
+                        const my = sourcePos.y + (centerPos.y - sourcePos.y) * t;
+                        const mz = sourcePos.z + (centerPos.z - sourcePos.z) * t;
+                        
+                        // Add Chaos/Noise to path
+                        const noiseScale = 1.0 * Math.sin(t * Math.PI); // Max noise in middle
+                        const angle = appTime * 10 + i;
+                        
+                        pX += (mx + Math.cos(angle) * 0.5 * noiseScale - pX) * 0.2;
+                        pY += (my + Math.sin(angle) * 0.5 * noiseScale - pY) * 0.2;
+                        pZ += (mz + Math.sin(angle * 3) * 0.5 * noiseScale - pZ) * 0.2;
+                        
+                        // Colors: Pure Red / Pure Blue mixing
+                        if (isRed) { colors[idx] = 1.0; colors[idx+1] = 0.0; colors[idx+2] = 0.0; } 
+                        else { colors[idx] = 0.0; colors[idx+1] = 0.2; colors[idx+2] = 1.0; }
+                        sizes[i] = 0.3;
+
+                    } else if (currentState === STATE.HOLDING) {
+                        // --- HOLLOW PURPLE LOGIC (Enhanced Center) ---
+                        const target = centerPos;
+                        
+                        // PRIMED EFFECT: Compression
+                        // If Primed, reduce radius, increase shake
+                        const isPrimed = snapPrimed;
+                        const compression = isPrimed ? 0.4 : 1.0; // Shrink to 40% size
+                        const shake = isPrimed ? 0.05 : 0.0; 
+
+                        const rand = this.randoms[i];
+                        const pulse = (1.0 + Math.sin(appTime * 15.0) * 0.05) * compression;
+
+                        if (rand < 0.08) {
+                            // --- LAYER 1: SINGULARITY ---
+                            const theta = appTime * 30 + i;
+                            const phi = i * 0.5;
+                            const r = 0.1 * Math.random() * pulse; 
+                            
+                            const tx = target.x + Math.sin(theta) * Math.cos(phi) * r;
+                            const ty = target.y + Math.sin(theta) * Math.sin(phi) * r;
+                            const tz = target.z + Math.cos(theta) * r;
+                            
+                            pX += (tx - pX) * 0.6 + (Math.random()-0.5)*shake; 
+                            pY += (ty - pY) * 0.6 + (Math.random()-0.5)*shake; 
+                            pZ += (tz - pZ) * 0.6 + (Math.random()-0.5)*shake;
+                            
+                            // Primed: Pure White
+                            if (isPrimed) { colors[idx] = 1; colors[idx+1] = 1; colors[idx+2] = 1; }
+                            else { colors[idx] = 1; colors[idx+1] = 1; colors[idx+2] = 1; }
+                            sizes[i] = (0.5 + Math.random() * 0.3) * (isPrimed ? 2.0 : 1.0); // Brighter
+                            
+                        } else if (rand < 0.20) {
+                             // --- LAYER 2: EVENT HORIZON ---
+                             const speed = 15.0;
+                             const radius = 0.4 * pulse;
+                             const angle = this.angles[i] + dt * speed;
+                             this.angles[i] = angle;
+                             
+                             const tx = target.x + Math.cos(angle) * radius;
+                             const ty = target.y + Math.sin(angle) * radius * 0.8; 
+                             const tz = target.z + Math.sin(angle * 2.0) * 0.1; 
+
+                             pX += (tx - pX) * 0.3 + (Math.random()-0.5)*shake;
+                             pY += (ty - pY) * 0.3 + (Math.random()-0.5)*shake;
+                             pZ += (tz - pZ) * 0.3 + (Math.random()-0.5)*shake;
+
+                             if (isPrimed) { colors[idx] = 1; colors[idx+1] = 1; colors[idx+2] = 1; }
+                             else { colors[idx] = 0.5; colors[idx+1] = 0.0; colors[idx+2] = 1.0; }
+                             sizes[i] = 0.3;
+
+                        } else if (rand < 0.35) {
+                            // --- LAYER 3: MAGNETIC FILAMENTS ---
+                            const speed = 2.0;
+                            const radius = 0.8 * pulse;
+                            const angle = this.angles[i] + dt * speed;
+                            this.angles[i] = angle;
+                            
+                            const u = angle;
+                            const v = angle * 3.0; 
+                            
+                            const tx = target.x + Math.sin(u) * radius * 0.5;
+                            const ty = target.y + Math.cos(v) * radius; 
+                            const tz = target.z + Math.cos(u) * radius * 0.5;
+
+                            pX += (tx - pX) * 0.2 + (Math.random()-0.5)*shake;
+                            pY += (ty - pY) * 0.2 + (Math.random()-0.5)*shake;
+                            pZ += (tz - pZ) * 0.2 + (Math.random()-0.5)*shake;
+                            
+                            if (isPrimed) { colors[idx] = 1.0; colors[idx+1] = 0.8; colors[idx+2] = 1.0; }
+                            else { colors[idx] = 1.0; colors[idx+1] = 0.0; colors[idx+2] = 0.5; }
+                            sizes[i] = 0.15;
+
                         } else {
-                            // Aura
+                            // --- LAYER 4: OUTER AURA ---
                             this.angles[i] += dt * 3.0;
-                            const baseScale = 3.5;
+                            const baseScale = 3.5 * compression; // Aura also compresses
                             const noise = Math.sin(i * 0.5 + appTime * 8.0);
-                            const spike = (Math.random() > 0.97) ? 2.5 : 1.0; 
+                            const spike = (Math.random() > 0.98) ? 2.5 : 1.0; 
                             const r = baseScale * spike + noise * 0.4;
+                            
                             const tx = target.x + Math.cos(this.angles[i] + i) * r;
                             const ty = target.y + Math.sin(this.angles[i] + i) * r;
                             const tz = target.z + Math.cos(i * 13.0) * r; 
-                            const jitter = 0.15;
+                            
+                            const jitter = isPrimed ? 0.3 : 0.15; // More jitter
                             pX += (tx - pX) * 0.1 + (Math.random()-0.5) * jitter;
                             pY += (ty - pY) * 0.1 + (Math.random()-0.5) * jitter;
                             pZ += (tz - pZ) * 0.1 + (Math.random()-0.5) * jitter;
+                            
                             const isVoid = Math.random() > 0.95;
-                            if (isVoid) { colors[idx] = 0.1; colors[idx+1] = 0.0; colors[idx+2] = 0.2; } 
-                            else { colors[idx] = colPurpleAura.r; colors[idx+1] = colPurpleAura.g; colors[idx+2] = colPurpleAura.b; }
+                            if (isVoid) { colors[idx] = 0.05; colors[idx+1] = 0.0; colors[idx+2] = 0.1; } 
+                            else { 
+                                if (isPrimed) { colors[idx] = 0.8; colors[idx+1] = 0.5; colors[idx+2] = 1.0; } // Brighter violet
+                                else { colors[idx] = colPurpleAura.r; colors[idx+1] = colPurpleAura.g; colors[idx+2] = colPurpleAura.b; }
+                            }
                             sizes[i] = 0.2 + Math.random() * 0.4;
                         }
 
@@ -767,7 +861,8 @@
             renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true }); 
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
-            document.body.appendChild(renderer.domElement);
+            // FIX: Append to container, not body, to respect Z-Index relative to video
+            container.appendChild(renderer.domElement);
 
             const renderScene = new THREE.RenderPass(scene, camera);
             
